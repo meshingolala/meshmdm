@@ -9,8 +9,8 @@ ENV GOTOOLCHAIN=local
 # Copy full source tree so local tool packages (e.g. server/goose) resolve properly
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags full -ldflags="-w -s" -o /bin/meshmdm ./cmd/fleet
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags full -ldflags="-w -s" -o /bin/meshmdmctl ./cmd/fleetctl
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=mod -tags full -ldflags="-w -s" -o /bin/meshmdm ./cmd/fleet
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=mod -tags full -ldflags="-w -s" -o /bin/meshmdmctl ./cmd/fleetctl
 
 FROM alpine:3.20
 

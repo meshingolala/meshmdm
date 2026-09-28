@@ -1,6 +1,6 @@
 module github.com/fleetdm/fleet/v4
 
-go 1.24.0
+go 1.26.4
 
 require (
 	cloud.google.com/go/pubsub v1.50.1
@@ -433,4 +433,3 @@ require (
 	sigs.k8s.io/yaml v1.4.0 // indirect
 	zombiezen.com/go/sqlite v0.13.1 // indirect
 )
-
