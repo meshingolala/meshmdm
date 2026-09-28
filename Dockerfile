@@ -1,17 +1,19 @@
 # Multi-stage Dockerfile for Mesh MDM Linux Deployment
-FROM golang:1.24-alpine AS builder
+# Use Debian glibc-based Golang image so Go auto-toolchain (Go >= 1.26) executes smoothly
+FROM golang:bookworm AS builder
 
 WORKDIR /src
-RUN apk add --no-cache git ca-certificates
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 
-ENV GOTOOLCHAIN=local
+ENV GOTOOLCHAIN=auto
 
-# Copy full source tree so local tool packages (e.g. server/goose) resolve properly
+# Copy full source tree so local tool packages resolve properly
 COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=mod -tags full -ldflags="-w -s" -o /bin/meshmdm ./cmd/fleet
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=mod -tags full -ldflags="-w -s" -o /bin/meshmdmctl ./cmd/fleetctl
 
+# Final lightweight runtime image
 FROM alpine:3.20
 
 RUN apk add --no-cache ca-certificates tzdata
