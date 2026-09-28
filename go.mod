@@ -434,19 +434,3 @@ require (
 	zombiezen.com/go/sqlite v0.13.1 // indirect
 )
 
-tool (
-	github.com/fleetdm/fleet/v4/server/goose
-	github.com/kevinburke/go-bindata
-	github.com/quasilyte/go-ruleguard/dsl
-)
-
-ignore (
-	./apps
-	./articles
-	./assets
-	./docs
-	./frontend
-	./handbook
-	./it-and-security
-	./node_modules
-)
