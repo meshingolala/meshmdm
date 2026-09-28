@@ -7,21 +7,11 @@ vendor
 node_modules
 dist
 
-# generated artifacts
-assets/bundle*.*
-assets/*.js
-assets/*.js.LICENSE.txt
-assets/*@*.svg
-assets/**/*@*.png
-assets/*@*.gif
-assets/*@*.eot
-assets/*@*.woff
-assets/*@*.woff2
-assets/*@*.ttf
-assets/*@*.mp4
-assets/icons/
-frontend/templates/react.tmpl
-frontend/utilities/osquery_sql_parser/osquery_sql_parser.generated.js
+# large media files in assets
+assets/*.mp4
+assets/**/*.mp4
+assets/images/*.gif
+assets/**/*.gif
 bindata.go
 server/bindata/generated.go
 *.cover
