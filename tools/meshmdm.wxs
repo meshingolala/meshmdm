@@ -23,8 +23,12 @@
       DowngradeErrorMessage="A newer version of Mesh MDM is already installed."
       AllowSameVersionUpgrades="yes" />
 
-    <Property Id="ARPNOREPAIR" Value="yes" Secure="yes" />
-    <Property Id="ARPNOMODIFY" Value="yes" Secure="yes" />
+
+
+    <!-- Enable GUI Setup Wizard -->
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR" />
+    <UIRef Id="WixUI_InstallDir" />
+    <WixVariable Id="WixUILicenseRtf" Value="LICENSE.rtf" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">
@@ -40,13 +44,50 @@
                            Action="set"
                            System="yes" />
             </Component>
+            <Component Id="C_MeshMdmCtl" Guid="12345678-ABCD-EF01-2345-6789ABCDEF02" Win64="yes">
+              <File Id="MeshMdmCtlExe" Source="build\meshmdmctl.exe" KeyPath="yes" />
+            </Component>
+            <Component Id="C_Launcher" Guid="23456789-ABCD-EF01-2345-6789ABCDEF03" Win64="yes">
+              <File Id="LaunchBatch" Source="build\launch-meshmdm.bat" KeyPath="yes" />
+            </Component>
           </Directory>
+        </Directory>
+      </Directory>
+
+      <!-- Desktop Shortcut -->
+      <Directory Id="DesktopFolder" Name="Desktop">
+        <Component Id="C_DesktopShortcut" Guid="34567890-ABCD-EF01-2345-6789ABCDEF04">
+          <Shortcut Id="DesktopLaunchShortcut"
+                    Name="Launch Mesh MDM"
+                    Description="Start Mesh MDM Server and open Dashboard"
+                    Target="[INSTALLDIR]launch-meshmdm.bat"
+                    WorkingDirectory="INSTALLDIR" />
+          <RegistryValue Root="HKCU" Key="Software\MeshMDM" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+      </Directory>
+
+      <!-- Start Menu Shortcut -->
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="Mesh MDM">
+          <Component Id="C_StartMenuShortcut" Guid="45678901-ABCD-EF01-2345-6789ABCDEF05">
+            <Shortcut Id="StartMenuLaunchShortcut"
+                      Name="Launch Mesh MDM"
+                      Description="Start Mesh MDM Server and open Dashboard"
+                      Target="[INSTALLDIR]launch-meshmdm.bat"
+                      WorkingDirectory="INSTALLDIR" />
+            <RemoveFolder Id="CleanUpShortCut" Directory="ApplicationProgramsFolder" On="uninstall" />
+            <RegistryValue Root="HKCU" Key="Software\MeshMDM" Name="ProgramMenuInstalled" Type="integer" Value="1" KeyPath="yes" />
+          </Component>
         </Directory>
       </Directory>
     </Directory>
 
     <Feature Id="MeshMdmFeature" Title="Mesh MDM Server" Level="1">
       <ComponentRef Id="C_MeshMdmExe" />
+      <ComponentRef Id="C_MeshMdmCtl" />
+      <ComponentRef Id="C_Launcher" />
+      <ComponentRef Id="C_DesktopShortcut" />
+      <ComponentRef Id="C_StartMenuShortcut" />
     </Feature>
   </Product>
 </Wix>
