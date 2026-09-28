@@ -6,7 +6,7 @@ services:
       dockerfile: Dockerfile
     container_name: meshmdm-server
     restart: unless-stopped
-    command: sh -c "meshmdm prepare db --no-prompt && meshmdm serve"
+    entrypoint: ["sh", "-c", "meshmdm prepare db --no-prompt && meshmdm serve"]
     ports:
       - "8080:8080"
     environment:

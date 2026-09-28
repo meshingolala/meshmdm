@@ -28,5 +28,6 @@ COPY --from=builder /bin/meshmdm /usr/local/bin/meshmdm
 
 EXPOSE 8080
 
-ENTRYPOINT ["/usr/local/bin/meshmdm"]
-CMD ["serve"]
+ENTRYPOINT []
+CMD ["sh", "-c", "meshmdm prepare db --no-prompt && meshmdm serve"]
+
