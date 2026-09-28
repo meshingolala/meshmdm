@@ -1,2 +1,11 @@
-!build/binary-bundle/linux/fleet
-!build/binary-bundle/linux/fleet 
+.git
+.github
+node_modules
+build
+wix3
+website
+articles
+docs
+handbook
+infrastructure
+tools/wix-docker
