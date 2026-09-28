@@ -20,6 +20,10 @@ services:
       - FLEET_SERVER_URL=${FLEET_SERVER_URL:-https://mdm.meshtech.cloud}
       - FLEET_LICENSE_KEY=${FLEET_LICENSE_KEY:-eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJGbGVldCBEZXZpY2UgTWFuYWdlbWVudCBJbmMuIiwiZXhwIjoxNzk4NTk3MDU1LCJzdWIiOiJkZXZlbG9wbWVudCIsImRldmljZXMiOjEwMDAsIm5vdGUiOiJmb3IgZGV2ZWxvcG1lbnQgb25seSIsInRpZXIiOiJwcmVtaXVtIiwiaWF0IjoxNzgyODI5MDU1fQ.SCwrVBV3fIb7JSS5tOLx0EmlyS6m20h34C9WOW1RqlLf009gEldWk2eO3ma8caW5_te4aEbjcvTBDeIkvM7NIA}
       - FLEET_SERVER_PRIVATE_KEY=${FLEET_SERVER_PRIVATE_KEY:-e5K66ebHBk3a/VghebXnvFE+osOdG+4HL12Cfs6ELz0=}
+      - FLEET_MDM_WINDOWS_WSTEP_IDENTITY_CERT=/wstep/wstep.crt
+      - FLEET_MDM_WINDOWS_WSTEP_IDENTITY_KEY=/wstep/wstep.key
+    volumes:
+      - ./wstep:/wstep:ro
     depends_on:
       mysql:
         condition: service_healthy
