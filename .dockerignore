@@ -14,5 +14,4 @@ tools/wix-docker
 *.zip
 *.tar.gz
 test/
-cmd/fleetctl
 meshmdm-linux-amd64*
