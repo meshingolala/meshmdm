@@ -1,0 +1,16 @@
+.query-report {
+  &__wrapper {
+    .host_id__header {
+      width: 95px; // Min width for 6 digits host IDs
+    }
+
+    .last_fetched__cell {
+      white-space: nowrap; // Prevent timestamp wrapping on multiple lines
+    }
+  }
+
+  &__results-cta {
+    display: flex;
+    gap: $pad-medium;
+  }
+}

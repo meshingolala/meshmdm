@@ -1,0 +1,41 @@
+# Premium inventory at 89d1161c56299ccd5c2b647cedce7d820ea6fd07
+
+- [ ] 01. Managed cloud
+- [ ] 02. Multi-tenancy
+- [ ] 03. Private update registry
+- [ ] 04. Control agent versions
+- [ ] 05. Two-factor authentication
+- [ ] 06. Role-based access control
+- [ ] 07. Audit logging
+- [ ] 08. MDM migration
+- [ ] 09. Zero-touch setup
+- [ ] 10. Fully-managed for employee-issued Android
+- [ ] 11. Account-based user enrollment for iOS/iPadOS
+- [ ] 12. User account sync
+- [ ] 13. Account creation & password sync (experimental)
+- [ ] 14. Human-endpoint mapping (IdP groups)
+- [ ] 15. Targeted device scoping
+- [ ] 16. Enforce disk encryption
+- [ ] 17. Recovery lock passcodes
+- [ ] 18. Enforce operating system (OS) updates
+- [ ] 19. Conditional access
+- [ ] 20. Application deployment (experimental)
+- [ ] 21. Self-service application installation (experimental)
+- [ ] 22. Application management
+- [ ] 23. Device remediation
+- [ ] 24. Maintenance windows (experimental)
+- [ ] 25. Send lock and wipe commands
+- [ ] 26. Custom tables
+- [ ] 27. Fleets
+- [ ] 28. Report on groups of devices
+- [ ] 29. Vulnerability scores
+- [ ] 30. CISA KEVs
+- [ ] 31. Asset discovery
+- [ ] 32. Automatic user creation (JIT, SCIM)
+- [ ] 33. Deploy certificates (experimental)
+- [ ] 34. Third-party orchestration
+- [ ] 35. Munki compatibility + visibility
+- [ ] 36. Unlimited email support (confidential)
+- [ ] 37. Phone and video call support
+
+Total: 37

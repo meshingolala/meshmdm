@@ -1,0 +1,23 @@
+{
+    "compilerOptions": {
+        "allowSyntheticDefaultImports": true,
+        "esModuleInterop": true,
+        "jsx": "react",
+        "lib": ["es2020", "dom"],
+        "module": "es2020",
+        "moduleResolution": "bundler",
+        "outDir": "dist/js",
+        "rootDir": "src",
+        "sourceMap": true,
+        "skipLibCheck": true,
+        "strict": false,
+        "target": "es2015",
+        "types": ["chrome", "jest", "node"]
+    },
+    "exclude": [
+        "node_modules",
+        "jest.config.js",
+        "jest.setup.ts",
+        "jsdomwithfetch.ts"
+    ],
+}

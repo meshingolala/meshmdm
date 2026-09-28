@@ -1,0 +1,93 @@
+import React, { useContext } from "react";
+
+import { ShowActivityDetailsHandler } from "components/ActivityItem/ActivityItem";
+import DataError from "components/DataError";
+import Pagination from "components/Pagination";
+import { AppContext } from "context/app";
+import { IHostUpcomingActivity } from "interfaces/activity";
+import { IHostUpcomingActivitiesResponse } from "services/entities/activities";
+import { PREMIUM_ONLY_DETAIL_ACTIVITIES } from "utilities/activityHelpers";
+
+import { upcomingActivityComponentMap } from "../ActivityConfig";
+import EmptyFeed from "../EmptyFeed/EmptyFeed";
+
+const baseClass = "upcoming-activity-feed";
+
+interface IUpcomingActivityFeedProps {
+  activities?: IHostUpcomingActivitiesResponse;
+  isError?: boolean;
+  canCancelActivities: boolean;
+  onShowDetails: ShowActivityDetailsHandler;
+  onCancel: (activity: IHostUpcomingActivity) => void;
+  onNextPage: () => void;
+  onPreviousPage: () => void;
+}
+
+const UpcomingActivityFeed = ({
+  activities,
+  isError = false,
+  canCancelActivities,
+  onShowDetails,
+  onCancel,
+  onNextPage,
+  onPreviousPage,
+}: IUpcomingActivityFeedProps) => {
+  const { isPremiumTier } = useContext(AppContext);
+
+  if (isError) {
+    return <DataError verticalPaddingSize="pad-large" />;
+  }
+
+  if (!activities) {
+    return null;
+  }
+
+  const { activities: activitiesList, meta } = activities;
+
+  if (activitiesList === null || activitiesList.length === 0) {
+    return (
+      <EmptyFeed
+        title="No pending activity "
+        message={
+          isPremiumTier
+            ? "Pending actions will appear here (scripts, software, lock, and wipe)."
+            : "Pending script runs will appear here."
+        }
+        className={`${baseClass}__empty-feed`}
+      />
+    );
+  }
+
+  return (
+    <div className={baseClass}>
+      <div className={`${baseClass}__feed-list`}>
+        {activitiesList.map((activity: IHostUpcomingActivity) => {
+          const ActivityItemComponent =
+            upcomingActivityComponentMap[activity.type];
+          const hideShowDetails =
+            !isPremiumTier && PREMIUM_ONLY_DETAIL_ACTIVITIES.has(activity.type);
+          return (
+            <ActivityItemComponent
+              key={activity.uuid}
+              tab="upcoming"
+              activity={activity}
+              onShowDetails={onShowDetails}
+              hideCancel={!canCancelActivities}
+              hideShowDetails={hideShowDetails}
+              onCancel={() => onCancel(activity)}
+            />
+          );
+        })}
+      </div>
+      <Pagination
+        disablePrev={!meta.has_previous_results}
+        disableNext={!meta.has_next_results}
+        hidePagination={!meta.has_previous_results && !meta.has_next_results}
+        onPrevPage={onPreviousPage}
+        onNextPage={onNextPage}
+      />
+    </div>
+  );
+};
+
+export default UpcomingActivityFeed;

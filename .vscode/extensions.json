@@ -1,0 +1,13 @@
+{
+    "recommendations": [
+        "stkb.rewrap",
+        "github.vscode-pull-request-github",
+        "golang.go",
+        "esbenp.prettier-vscode",
+        "redhat.vscode-yaml",
+        "dbaeumer.vscode-eslint",
+        "firefox-devtools.vscode-firefox-debug",
+        "editorconfig.editorconfig",
+        "timonwong.shellcheck"
+    ]
+}

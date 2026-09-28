@@ -1,0 +1,44 @@
+name: release-helm
+
+on:
+  release:
+    types: [released] # don't trigger on pre-releases
+  workflow_dispatch: # allow manual trigger
+
+# This allows a subsequently queued workflow run to interrupt previous runs
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id}}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    # fail-fast using bash -eo pipefail. See https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#exit-codes-and-error-action-preference
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  publish-chart:
+    permissions:
+      contents: write  # to push helm charts
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Harden Runner
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+      with:
+        egress-policy: audit
+
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+        # A release published from a draft carries an untagged-* ref that
+        # resolves to the default branch, not the tag; check out the release
+        # tag explicitly so the packaged chart matches the release.
+        ref: ${{ github.event.release.tag_name || github.ref }}
+    - uses: stefanprodan/helm-gh-pages@0ad2bb377311d61ac04ad9eb6f252fb68e207260
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        charts_dir: charts
+        target_dir: charts
+        linting: off

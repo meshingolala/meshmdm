@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  meshmdm:
+    image: meshmdm:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: meshmdm-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - FLEET_MYSQL_ADDRESS=mysql:3306
+      - FLEET_MYSQL_DATABASE=meshmdm
+      - FLEET_MYSQL_USERNAME=meshmdm
+      - FLEET_MYSQL_PASSWORD=meshmdmpassword
+      - FLEET_REDIS_ADDRESS=redis:6379
+      - FLEET_SERVER_ADDRESS=0.0.0.0:8080
+      - FLEET_SERVER_TLS=false
+      - FLEET_DEV_LICENSE=true
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  mysql:
+    image: mysql:8.0
+    container_name: meshmdm-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: meshmdm
+      MYSQL_USER: meshmdm
+      MYSQL_PASSWORD: meshmdmpassword
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: meshmdm-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
+volumes:
+  mysql_data:
+  redis_data:

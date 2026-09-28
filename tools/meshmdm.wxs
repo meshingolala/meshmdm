@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+    Id="*"
+    Name="Mesh MDM Server"
+    Language="1033"
+    Version="1.0.0"
+    Manufacturer="Mesh MDM"
+    UpgradeCode="B5C43E21-7A89-4D12-9F0E-8A2B3C4D5E6F">
+
+    <Package
+      Keywords="meshmdm,mdm,osquery,security"
+      Description="Mesh MDM Server and Central Management Platform"
+      InstallerVersion="500"
+      Compressed="yes"
+      InstallScope="perMachine"
+      InstallPrivileges="elevated"
+      Languages="1033" />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <MajorUpgrade
+      DowngradeErrorMessage="A newer version of Mesh MDM is already installed."
+      AllowSameVersionUpgrades="yes" />
+
+    <Property Id="ARPNOREPAIR" Value="yes" Secure="yes" />
+    <Property Id="ARPNOMODIFY" Value="yes" Secure="yes" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="MESHMDMDIR" Name="MeshMDM">
+          <Directory Id="INSTALLDIR" Name="bin">
+            <Component Id="C_MeshMdmExe" Guid="98765432-ABCD-EF01-2345-6789ABCDEF01" Win64="yes">
+              <File Id="MeshMdmExe" Source="build\meshmdm.exe" KeyPath="yes" />
+              <Environment Id="PATH"
+                           Name="PATH"
+                           Value="[INSTALLDIR]"
+                           Permanent="no"
+                           Part="last"
+                           Action="set"
+                           System="yes" />
+            </Component>
+          </Directory>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <Feature Id="MeshMdmFeature" Title="Mesh MDM Server" Level="1">
+      <ComponentRef Id="C_MeshMdmExe" />
+    </Feature>
+  </Product>
+</Wix>

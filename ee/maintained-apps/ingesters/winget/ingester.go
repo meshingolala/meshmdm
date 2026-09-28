@@ -1,0 +1,742 @@
+package winget
+
+import (
+	"context"
+	_ "embed"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
+	"slices"
+	"strings"
+
+	maintained_apps "github.com/fleetdm/fleet/v4/ee/maintained-apps"
+	external_refs "github.com/fleetdm/fleet/v4/ee/maintained-apps/ingesters/winget/external_refs"
+	"github.com/fleetdm/fleet/v4/pkg/file"
+	"github.com/fleetdm/fleet/v4/pkg/fleethttp"
+	"github.com/fleetdm/fleet/v4/pkg/patch_policy"
+	"github.com/fleetdm/fleet/v4/server/contexts/ctxerr"
+	feednvd "github.com/fleetdm/fleet/v4/server/vulnerabilities/nvd/tools/cvefeed/nvd"
+	"github.com/google/go-github/v37/github"
+	"gopkg.in/yaml.v2"
+)
+
+func IngestApps(ctx context.Context, logger *slog.Logger, inputsPath string, slugFilter string) ([]*maintained_apps.FMAManifestApp, error) {
+	logger.InfoContext(ctx, "starting winget app data ingestion")
+	// Read from our list of apps we should be ingesting
+	files, err := os.ReadDir(inputsPath)
+	if err != nil {
+		return nil, ctxerr.Wrap(ctx, err, "reading winget input data directory")
+	}
+
+	var manifestApps []*maintained_apps.FMAManifestApp
+	var skippedApps int
+
+	githubHTTPClient := fleethttp.NewGithubClient()
+	githubClient := github.NewClient(githubHTTPClient)
+	opts := &github.RepositoryContentGetOptions{
+		Ref: "master",
+	}
+
+	i := &wingetIngester{
+		githubClient: githubClient,
+		ghClientOpts: opts,
+		logger:       logger,
+	}
+
+	for _, f := range files {
+		if f.IsDir() {
+			continue
+		}
+
+		// Skip non-JSON files (e.g., .DS_Store on macOS)
+		if !strings.HasSuffix(f.Name(), ".json") {
+			continue
+		}
+
+		fileBytes, err := os.ReadFile(path.Join(inputsPath, f.Name()))
+		if err != nil {
+			return nil, ctxerr.WrapWithData(ctx, err, "reading app input file", map[string]any{"file_name": f.Name()})
+		}
+
+		var input inputApp
+		if err := json.Unmarshal(fileBytes, &input); err != nil {
+			return nil, ctxerr.Wrapf(ctx, err, "unmarshal app input file: %s", f.Name())
+		}
+
+		if input.Slug == "" {
+			return nil, ctxerr.NewWithData(ctx, "missing slug for app", map[string]any{"file_name": f.Name()})
+		}
+
+		if input.UniqueIdentifier == "" {
+			return nil, ctxerr.NewWithData(ctx, "missing unique identifier for app", map[string]any{"file_name": f.Name()})
+		}
+
+		if input.Name == "" {
+			return nil, ctxerr.NewWithData(ctx, "missing name for app", map[string]any{"file_name": f.Name()})
+		}
+
+		if input.PackageIdentifier == "" {
+			return nil, ctxerr.NewWithData(ctx, "missing package identifier for app", map[string]any{"file_name": f.Name()})
+		}
+
+		if slugFilter != "" && !strings.Contains(input.Slug, slugFilter) {
+			continue
+		}
+
+		logger.InfoContext(ctx, "ingesting winget app", "name", input.Name)
+
+		outApp, err := i.ingestOne(ctx, input)
+		if err != nil {
+			// skip throttled apps; they'll be retried on the next scheduled run
+			if isTransientGitHubError(err) {
+				skippedApps++
+				logger.WarnContext(ctx, "skipping app: GitHub rate-limited its ingestion; it will be retried on the next scheduled run",
+					"name", input.Name, "err", err)
+				continue
+			}
+			return nil, ctxerr.Wrap(ctx, err, "ingesting winget app")
+		}
+
+		manifestApps = append(manifestApps, outApp)
+	}
+
+	if skippedApps > 0 {
+		logger.WarnContext(ctx, "some winget apps were skipped due to GitHub rate limiting", "count", skippedApps)
+	}
+
+	return manifestApps, nil
+}
+
+// isTransientGitHubError reports whether err is GitHub load-shedding (rate limits, 429s, 5xx).
+func isTransientGitHubError(err error) bool {
+	if _, ok := errors.AsType[*github.RateLimitError](err); ok {
+		return true
+	}
+	if _, ok := errors.AsType[*github.AbuseRateLimitError](err); ok {
+		return true
+	}
+	if ghErr, ok := errors.AsType[*github.ErrorResponse](err); ok && ghErr.Response != nil {
+		return ghErr.Response.StatusCode == http.StatusTooManyRequests || ghErr.Response.StatusCode >= 500
+	}
+	return false
+}
+
+type wingetIngester struct {
+	githubClient *github.Client
+	ghClientOpts *github.RepositoryContentGetOptions
+	logger       *slog.Logger
+}
+
+// wingetVersionManifestDirs keeps only subdirectory entries whose names look like winget
+// package version folders (semver-style). The upstream repo may add other top-level
+// folders (e.g. "Portable") that sort after numeric versions but are not manifest roots.
+// It also skips single-segment "year" folders such as "2010"/"2013"/"2019" that some
+// packages (e.g. Microsoft.Office) keep alongside their current multi-segment versions;
+// those legacy folders would otherwise outrank a real version like "16.0.19929.20062"
+// because a bare 2010 is numerically greater than 16.
+func wingetVersionManifestDirs(contents []*github.RepositoryContent) []*github.RepositoryContent {
+	var out []*github.RepositoryContent
+	for _, c := range contents {
+		if c.GetType() != "dir" {
+			continue
+		}
+		name := c.GetName()
+		if len(name) == 0 {
+			continue
+		}
+		if name[0] < '0' || name[0] > '9' {
+			continue
+		}
+		if !strings.Contains(name, ".") {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+func (i *wingetIngester) ingestOne(ctx context.Context, input inputApp) (*maintained_apps.FMAManifestApp, error) {
+	// this is the path within the winget GitHub repo where the manifests are located
+	dirPath := path.Join(
+		"manifests",
+		strings.ToLower(input.PackageIdentifier[:1]),
+		strings.ReplaceAll(input.PackageIdentifier, ".", "/"),
+	)
+
+	_, repoContents, _, err := i.githubClient.Repositories.GetContents(ctx,
+		"microsoft",
+		"winget-pkgs",
+		dirPath,
+		i.ghClientOpts,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get data from winget repo: %w", err)
+	}
+
+	versionDirs := wingetVersionManifestDirs(repoContents)
+	if len(versionDirs) == 0 {
+		return nil, ctxerr.NewWithData(ctx, "no version manifest directories found under package path", map[string]any{
+			"path": dirPath,
+		})
+	}
+
+	// sort the list of directories in descending order
+	slices.SortFunc(versionDirs, func(a, b *github.RepositoryContent) int { return feednvd.SmartVerCmp(b.GetName(), a.GetName()) })
+
+	// Try version directories in descending order. Some packages have nested
+	// grouping directories (e.g. "2020/20.001.30002") that look like version
+	// dirs but don't contain manifest files at the expected depth. Skip those
+	// and fall through to the next candidate.
+	var m installerManifest
+	var l localeManifest
+	var versionFound bool
+	for _, versionDir := range versionDirs {
+		vName := versionDir.GetName()
+		if vName == "" {
+			continue
+		}
+
+		installerManifestPath := path.Join(
+			dirPath,
+			vName,
+			fmt.Sprintf("%s.installer.yaml", input.PackageIdentifier),
+		)
+
+		fileContents, _, _, err := i.githubClient.Repositories.GetContents(ctx,
+			"microsoft",
+			"winget-pkgs",
+			installerManifestPath,
+			i.ghClientOpts,
+		)
+		if err != nil {
+			// only a genuine 404 may fall through to an older version dir
+			if ghErr, ok := errors.AsType[*github.ErrorResponse](err); ok &&
+				ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusNotFound {
+				i.logger.DebugContext(ctx, "installer manifest not found, trying next version", "version", vName, "err", err)
+				continue
+			}
+			return nil, ctxerr.Wrap(ctx, err, "getting winget installer manifest file contents")
+		}
+
+		contents, err := fileContents.GetContent()
+		if err != nil {
+			return nil, ctxerr.Wrap(ctx, err, "extracting installer manifest file contents")
+		}
+
+		if err := yaml.Unmarshal([]byte(contents), &m); err != nil {
+			return nil, ctxerr.Wrap(ctx, err, "unmarshaling winget manifest")
+		}
+
+		localeManifestPath := path.Join(dirPath, vName, fmt.Sprintf("%s.locale.en-US.yaml", input.PackageIdentifier))
+		fileContents, _, _, err = i.githubClient.Repositories.GetContents(ctx,
+			"microsoft",
+			"winget-pkgs",
+			localeManifestPath,
+			i.ghClientOpts,
+		)
+		if err != nil {
+			return nil, ctxerr.Wrap(ctx, err, "getting winget manifest locale file contents")
+		}
+
+		contents, err = fileContents.GetContent()
+		if err != nil {
+			return nil, ctxerr.Wrap(ctx, err, "getting locale manifest contents")
+		}
+
+		if err := yaml.Unmarshal([]byte(contents), &l); err != nil {
+			return nil, ctxerr.Wrap(ctx, err, "unmarshaling winget locale manifest")
+		}
+
+		versionFound = true
+		break
+	}
+
+	if !versionFound {
+		return nil, ctxerr.NewWithData(ctx, "no valid version manifest found for app", map[string]any{
+			"path": dirPath,
+		})
+	}
+
+	var out maintained_apps.FMAManifestApp
+	var selectedInstaller *installer
+	var installScript, uninstallScript string
+	productCode := m.ProductCode
+
+	// if we have a provided install script, use that
+	if input.InstallScriptPath != "" {
+		scriptBytes, err := os.ReadFile(input.InstallScriptPath)
+		if err != nil {
+			return nil, ctxerr.Wrap(ctx, err, "reading provided install script file")
+		}
+
+		installScript = string(scriptBytes)
+	}
+
+	if input.UninstallScriptPath != "" {
+		scriptBytes, err := os.ReadFile(input.UninstallScriptPath)
+		if err != nil {
+			return nil, ctxerr.Wrap(ctx, err, "reading provided uninstall script file")
+		}
+
+		uninstallScript = string(scriptBytes)
+	}
+
+	for _, installer := range m.Installers {
+		i.logger.DebugContext(ctx, "checking installer", "arch", installer.Architecture, "type", installer.InstallerType, "locale", installer.InstallerLocale, "scope", installer.Scope)
+		installerType := m.InstallerType
+		if installerType == "" || isVendorType(installerType) {
+			installerType = installer.InstallerType
+		}
+
+		if installerType == "" || isVendorType(installerType) {
+			// try to get it from the URL
+			installerType = strings.Trim(filepath.Ext(installer.InstallerURL), ".")
+		}
+
+		// Normalize wix (WiX Toolset) to msi since wix installers are MSI files
+		if installerType == installerTypeWix {
+			installerType = installerTypeMSI
+		}
+
+		// Normalize burn (WiX Burn bootstrapper) to exe since burn produces EXE bundles
+		if installerType == installerTypeBurn {
+			installerType = installerTypeExe
+		}
+
+		scope := m.Scope
+		if scope == "" {
+			scope = installer.Scope
+			if scope == "" {
+				switch installerType {
+				case installerTypeMSI:
+					scope = machineScope
+				case installerTypeMSIX, "zip":
+					// AppX/MSIX packages and zip files containing AppX are typically user-scoped
+					scope = userScope
+				}
+			}
+		}
+
+		if !isFileType(installerType) && scope == machineScope {
+			// assume we're an MSI
+			installerType = installerTypeMSI
+		}
+
+		if input.InstallerLocale == "" {
+			// We only care about the locale if one is specified
+			installer.InstallerLocale = ""
+		}
+
+		// Check if this installer matches our criteria
+		matches := installer.Architecture == input.InstallerArch &&
+			scope == input.InstallerScope &&
+			installer.InstallerLocale == input.InstallerLocale &&
+			installerType == input.InstallerType
+
+		if matches {
+			// Prefer installers where the URL extension matches the desired installer type
+			// This ensures we select the actual MSI installer over burn (EXE) installers
+			urlExt := strings.Trim(filepath.Ext(installer.InstallerURL), ".")
+			if urlExt == input.InstallerType {
+				// Perfect match - URL extension matches desired type
+				selectedInstaller = &installer
+				break
+			}
+			// Keep as fallback candidate if we haven't found a perfect match yet
+			if selectedInstaller == nil {
+				selectedInstaller = &installer
+			}
+		}
+
+	}
+
+	if selectedInstaller == nil {
+		return nil, ctxerr.New(ctx, "failed to find installer for app")
+	}
+
+	if input.InstallerType == installerTypeMSI && input.InstallerScope == machineScope {
+		if installScript == "" {
+			installScript = file.GetInstallScript(installerTypeMSI)
+		}
+	}
+
+	var upgradeCode string
+	if (input.InstallerType == installerTypeMSI || input.UninstallType == installerTypeMSI) && input.InstallerScope == machineScope {
+		for _, fe := range m.AppsAndFeaturesEntries {
+			if fe.UpgradeCode != "" {
+				upgradeCode = fe.UpgradeCode
+				break
+			}
+		}
+		if upgradeCode == "" {
+			for _, fe := range selectedInstaller.AppsAndFeaturesEntries {
+				if fe.UpgradeCode != "" {
+					upgradeCode = fe.UpgradeCode
+					break
+				}
+			}
+		}
+		if uninstallScript == "" && upgradeCode != "" {
+			var err error
+			uninstallScript, err = buildUpgradeCodeBasedUninstallScript(upgradeCode)
+			if err != nil {
+				return nil, ctxerr.Wrap(ctx, err, "building upgrade code based uninstall script")
+			}
+		}
+
+		if uninstallScript == "" {
+			uninstallScript = file.GetUninstallScript(installerTypeMSI)
+		}
+	}
+
+	if installScript == "" {
+		return nil, ctxerr.New(ctx, "no install script found for app, aborting")
+	}
+
+	if uninstallScript == "" {
+		return nil, ctxerr.New(ctx, "no uninstall script found for app, aborting")
+	}
+
+	if productCode == "" {
+		productCode = selectedInstaller.ProductCode
+	}
+	if input.InstallerType == installerTypeMSIX && productCode == "" {
+		productCode = selectedInstaller.PackageFamilyName
+	}
+	if input.InstallerType == installerTypeMSI && productCode != "" {
+		productCode = strings.Split(productCode, ".")[0]
+	}
+
+	if upgradeCode != "" {
+		out.UpgradeCode = upgradeCode
+	}
+
+	out.Name = input.Name
+	out.Slug = input.Slug
+	out.InstallerURL = normalizeSourceForgeURL(selectedInstaller.InstallerURL)
+	out.UniqueIdentifier = input.UniqueIdentifier
+	out.DefaultCategories = input.DefaultCategories
+	out.SHA256 = "no_check"
+	if !input.IgnoreHash {
+		out.SHA256 = strings.ToLower(selectedInstaller.InstallerSha256) // maintain consistency with darwin outputs SHAs
+	}
+	out.Version = m.PackageVersion
+	publisher := l.Publisher
+	if input.ProgramPublisher != "" {
+		publisher = input.ProgramPublisher
+	}
+	name := l.PackageName
+	if input.UniqueIdentifier != "" {
+		name = input.UniqueIdentifier
+	}
+
+	out.Queries = setUpExistsQuery(input.FuzzyMatchName, name, publisher)
+	if input.ExistsQuery != "" {
+		out.Queries.Exists = input.ExistsQuery
+	}
+	out.InstallScript = installScript
+	processedUninstallScript, err := preProcessUninstallScript(uninstallScript, productCode)
+	if err != nil {
+		return nil, ctxerr.Wrap(ctx, err, "pre-processing uninstall script")
+	}
+	out.UninstallScript = processedUninstallScript
+	out.InstallScriptRef = maintained_apps.GetScriptRef(out.InstallScript)
+	out.UninstallScriptRef = maintained_apps.GetScriptRef(out.UninstallScript)
+	out.Frozen = input.Frozen
+
+	external_refs.EnrichManifest(&out)
+
+	// The patch policy normally compares osquery's reported version against the
+	// winget PackageVersion. Some installers report a registry DisplayVersion in a
+	// different format (e.g. python.org reports "3.14.5150.0" for "3.14.5"), which
+	// breaks version_compare ordering. When opted in, compare against the
+	// DisplayVersion so the patch policy flags outdated installs correctly.
+	patchVersion := out.Version
+	if input.UseDisplayVersionForPatch {
+		displayVersion := firstDisplayVersion(selectedInstaller.AppsAndFeaturesEntries)
+		if displayVersion == "" {
+			displayVersion = firstDisplayVersion(m.AppsAndFeaturesEntries)
+		}
+		if displayVersion == "" {
+			return nil, ctxerr.New(ctx, "use_display_version_for_patch is set but no DisplayVersion found in winget manifest")
+		}
+		patchVersion = displayVersion
+	}
+
+	// create patch policy
+	out.Queries.Patched, err = patch_policy.GenerateQueryForManifest(patch_policy.PolicyData{
+		Platform:    "windows",
+		Version:     patchVersion,
+		ExistsQuery: out.Queries.Exists,
+	})
+	if err != nil {
+		return nil, ctxerr.Wrap(ctx, err, "creating patch policy")
+	}
+
+	out.Queries.Open = patch_policy.GenerateOpenQuery("windows", "", out.Name)
+
+	// arm64 builds can't run on x64 hosts, so their policies must pass there. The open
+	// query stays as-is: it only runs on a host already queued for the install.
+	if input.InstallerArch == "arm64" {
+		out.Queries.Exists = patch_policy.ScopeToWindowsARM(out.Queries.Exists)
+		out.Queries.Patched = patch_policy.ScopeToWindowsARM(out.Queries.Patched)
+	}
+
+	return &out, nil
+}
+
+func escapeSQLParam(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
+}
+
+// firstDisplayVersion returns the first non-empty DisplayVersion from a set of
+// AppsAndFeaturesEntries, or "" if none is present.
+func firstDisplayVersion(entries []appsAndFeaturesEntries) string {
+	for _, fe := range entries {
+		if v := strings.TrimSpace(fe.DisplayVersion); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func setUpExistsQuery(fuzzy fuzzyMatch, name string, publisher string) maintained_apps.FMAQueries {
+	// TODO - consider UpgradeCode here?
+	return maintained_apps.FMAQueries{
+		Exists: fmt.Sprintf("SELECT 1 FROM programs WHERE %s AND publisher = '%s';",
+			fuzzy.nameCondition(name), escapeSQLParam(publisher)),
+	}
+}
+
+func buildUpgradeCodeBasedUninstallScript(upgradeCode string) (string, error) {
+	if err := file.ValidatePackageIdentifiers(nil, upgradeCode); err != nil {
+		return "", err
+	}
+	return file.UpgradeCodeRegex.ReplaceAllString(file.UninstallMsiWithUpgradeCodeScript, fmt.Sprintf("'%s'${suffix}", upgradeCode)), nil
+}
+
+func preProcessUninstallScript(uninstallScript, productCode string) (string, error) {
+	if productCode == "" {
+		return uninstallScript, nil
+	}
+	if err := file.ValidatePackageIdentifiers([]string{productCode}, ""); err != nil {
+		return "", err
+	}
+	code := fmt.Sprintf("'%s'", productCode)
+	return file.PackageIDRegex.ReplaceAllString(uninstallScript, fmt.Sprintf("%s${suffix}", code)), nil
+}
+
+// these are installer types that correspond to software vendors, not the actual installer type
+// (like exe or msi).
+var vendorTypes = map[string]struct{}{
+	installerTypeWix:      {},
+	installerTypeNullSoft: {},
+	installerTypeInno:     {},
+}
+
+func isVendorType(installerType string) bool {
+	_, ok := vendorTypes[installerType]
+	return ok
+}
+
+var fileTypes = map[string]struct{}{
+	installerTypeMSI:  {},
+	installerTypeMSIX: {},
+	installerTypeExe:  {},
+	"zip":             {},
+}
+
+func isFileType(installerType string) bool {
+	_, ok := fileTypes[installerType]
+	return ok
+}
+
+// normalizeSourceForgeURL appends the "/download" segment that SourceForge's
+// project file URLs need in order to serve the file itself.
+//
+// A bare https://sourceforge.net/projects/<p>/files/<path> URL returns a 200
+// with an HTML landing page for non-browser clients, so Fleet would download
+// that page instead of the installer. Only the ".../download" form redirects to
+// a mirror and returns the binary. Some winget manifests already carry the
+// suffix (WinSCP) and some don't (CrystalDiskMark), so normalize here rather
+// than depending on the manifest author.
+//
+// Called after installer selection so the type-detection above still sees the
+// original file extension.
+func normalizeSourceForgeURL(installerURL string) string {
+	u, err := url.Parse(installerURL)
+	if err != nil {
+		return installerURL
+	}
+
+	host := strings.TrimPrefix(strings.ToLower(u.Hostname()), "www.")
+	if host != "sourceforge.net" {
+		// downloads.sourceforge.net serves files directly and takes no suffix.
+		return installerURL
+	}
+
+	// Only project file paths need this; leave anything else alone.
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) < 4 || parts[0] != "projects" || parts[2] != "files" {
+		return installerURL
+	}
+	if parts[len(parts)-1] == "download" {
+		return installerURL
+	}
+
+	u.Path = path.Join(u.Path, "download")
+	return u.String()
+}
+
+// fuzzyMatch supports three JSON representations:
+//   - false (or omitted): exact match on programs.name
+//   - true: automatic LIKE pattern  "name LIKE '<unique_identifier> %'"
+//   - "<pattern>": a custom LIKE pattern used verbatim, e.g. "Mozilla Firefox % ESR %"
+type fuzzyMatch struct {
+	Enabled bool   // true when the JSON value is the boolean `true`
+	Custom  string // non-empty when the JSON value is a string pattern
+}
+
+func (f *fuzzyMatch) UnmarshalJSON(data []byte) error {
+	// Try boolean first (handles true, false, and omitted-via-zero-value).
+	var b bool
+	if err := json.Unmarshal(data, &b); err == nil {
+		f.Enabled = b
+		f.Custom = ""
+		return nil
+	}
+	// Try string.
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		f.Custom = s
+		f.Enabled = s != ""
+		return nil
+	}
+	return fmt.Errorf("fuzzy_match_name must be a boolean or a string, got %s", string(data))
+}
+
+func (f *fuzzyMatch) nameCondition(name string) string {
+	if f.Custom != "" {
+		return fmt.Sprintf("name LIKE '%s'", escapeSQLParam(f.Custom))
+	}
+	if f.Enabled {
+		return fmt.Sprintf("name LIKE '%s %%'", escapeSQLParam(name))
+	}
+	return fmt.Sprintf("name = '%s'", escapeSQLParam(name))
+}
+
+type inputApp struct {
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+	// PackageIdentifier is the identifier used by winget. It's composed of a vendor part (e.g.
+	// AgileBits) and an app part (e.g. 1Password), joined by a "."
+	PackageIdentifier string `json:"package_identifier"`
+	// The value matching programs.name for the primary app package in osquery
+	UniqueIdentifier    string     `json:"unique_identifier"`
+	InstallScriptPath   string     `json:"install_script_path"`
+	UninstallScriptPath string     `json:"uninstall_script_path"`
+	InstallerArch       string     `json:"installer_arch"`
+	InstallerType       string     `json:"installer_type"`
+	InstallerScope      string     `json:"installer_scope"`
+	InstallerLocale     string     `json:"installer_locale"`
+	ProgramPublisher    string     `json:"program_publisher"`
+	UninstallType       string     `json:"uninstall_type"`
+	FuzzyMatchName      fuzzyMatch `json:"fuzzy_match_name"`
+	// ExistsQuery overrides the default programs-table exists query (e.g. portable zip installs).
+	ExistsQuery string `json:"exists_query,omitempty"`
+	// UseDisplayVersionForPatch makes the patch policy compare against the
+	// installer's registry DisplayVersion (from AppsAndFeaturesEntries) instead of
+	// the winget PackageVersion. Needed when the registry version format differs
+	// from the marketing version in a way that breaks version_compare ordering
+	// (e.g. python.org installers report "3.14.5150.0" for version "3.14.5").
+	UseDisplayVersionForPatch bool `json:"use_display_version_for_patch"`
+	// Whether to use "no_check" instead of the app's hash (e.g. for non-pinned download URLs)
+	IgnoreHash        bool     `json:"ignore_hash"`
+	DefaultCategories []string `json:"default_categories"`
+	Frozen            bool     `json:"frozen"`
+	PatchPolicyPath   string   `json:"patch_policy_path"`
+	// RequiresClientOS marks installers that refuse to run on Windows Server
+	// SKUs (e.g. Dell Display and Peripheral Manager). The ingester ignores it;
+	// CI (.github/scripts/partition-fma-apps.sh) reads it to route validation to
+	// the windows-11-arm runner, the only GitHub-hosted client-OS Windows runner.
+	RequiresClientOS bool `json:"requires_client_os"`
+}
+
+type installerManifest struct {
+	PackageIdentifier      string                   `yaml:"PackageIdentifier"`
+	PackageVersion         string                   `yaml:"PackageVersion"`
+	Installers             []installer              `yaml:"Installers"`
+	InstallerType          string                   `yaml:"InstallerType"`
+	AppsAndFeaturesEntries []appsAndFeaturesEntries `yaml:"AppsAndFeaturesEntries,omitempty"`
+	ProductCode            string                   `yaml:"ProductCode"`
+	Scope                  string                   `yaml:"Scope"`
+}
+
+type installer struct {
+	Architecture string `yaml:"Architecture"`
+	// InstallerType is the filetype of the installer. Either "exe" or "msi".
+	InstallerType          string                   `yaml:"InstallerType"`
+	Scope                  string                   `yaml:"Scope"`
+	InstallerURL           string                   `yaml:"InstallerUrl"`
+	InstallerSha256        string                   `yaml:"InstallerSha256"`
+	InstallModes           []string                 `yaml:"InstallModes,omitempty"`
+	InstallerSwitches      installerSwitches        `yaml:"InstallerSwitches,omitempty"`
+	ProductCode            string                   `yaml:"ProductCode"`
+	PackageFamilyName      string                   `yaml:"PackageFamilyName"`
+	AppsAndFeaturesEntries []appsAndFeaturesEntries `yaml:"AppsAndFeaturesEntries,omitempty"`
+	InstallerLocale        string                   `yaml:"InstallerLocale"`
+}
+type installerSwitches struct {
+	Silent             string `yaml:"Silent"`
+	SilentWithProgress string `yaml:"SilentWithProgress"`
+}
+
+type appsAndFeaturesEntries struct {
+	Publisher      string `yaml:"Publisher"`
+	ProductCode    string `yaml:"ProductCode"`
+	UpgradeCode    string `yaml:"UpgradeCode"`
+	DisplayVersion string `yaml:"DisplayVersion"`
+}
+
+type localeManifest struct {
+	PackageIdentifier   string   `yaml:"PackageIdentifier"`
+	PackageVersion      string   `yaml:"PackageVersion"`
+	PackageLocale       string   `yaml:"PackageLocale"`
+	Publisher           string   `yaml:"Publisher"`
+	PublisherURL        string   `yaml:"PublisherUrl"`
+	PublisherSupportURL string   `yaml:"PublisherSupportUrl"`
+	PrivacyURL          string   `yaml:"PrivacyUrl"`
+	Author              string   `yaml:"Author"`
+	PackageName         string   `yaml:"PackageName"`
+	PackageURL          string   `yaml:"PackageUrl"`
+	License             string   `yaml:"License"`
+	LicenseURL          string   `yaml:"LicenseUrl"`
+	Copyright           string   `yaml:"Copyright"`
+	CopyrightURL        string   `yaml:"CopyrightUrl"`
+	ShortDescription    string   `yaml:"ShortDescription"`
+	Description         string   `yaml:"Description"`
+	Tags                []string `yaml:"Tags"`
+	PurchaseURL         string   `yaml:"PurchaseUrl"`
+	ManifestType        string   `yaml:"ManifestType"`
+	ManifestVersion     string   `yaml:"ManifestVersion"`
+}
+
+const (
+	machineScope          = "machine"
+	userScope             = "user"
+	installerTypeMSI      = "msi"
+	installerTypeMSIX     = "msix"
+	installerTypeExe      = "exe"
+	installerTypeWix      = "wix"
+	installerTypeNullSoft = "nullsoft"
+	installerTypeInno     = "inno"
+	installerTypeBurn     = "burn"
+	arch64Bit             = "x64"
+	arch32Bit             = "x86"
+)

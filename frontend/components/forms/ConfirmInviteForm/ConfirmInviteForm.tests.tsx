@@ -1,0 +1,129 @@
+import { render, screen } from "@testing-library/react";
+import React from "react";
+
+import ConfirmInviteForm from "components/forms/ConfirmInviteForm";
+import { renderWithSetup } from "test/test-utils";
+
+describe("ConfirmInviteForm - component", () => {
+  const handleSubmitSpy = jest.fn();
+  const defaultFormData = { name: "Test User" };
+
+  it("renders", () => {
+    render(
+      <ConfirmInviteForm
+        defaultFormData={defaultFormData}
+        handleSubmit={handleSubmitSpy}
+      />
+    );
+    expect(
+      screen.getByRole("textbox", { name: "Full name" })
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Password")).toBeInTheDocument();
+    expect(screen.getByLabelText("Confirm password")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Submit" })).toBeInTheDocument();
+  });
+
+  // Pristine required fields stay silent until submit.
+  it("does not show errors on pristine fields before submit", async () => {
+    const { user } = renderWithSetup(
+      <ConfirmInviteForm
+        defaultFormData={{ name: "" }}
+        handleSubmit={handleSubmitSpy}
+      />
+    );
+
+    await user.click(screen.getByRole("textbox", { name: "Full name" }));
+    await user.tab();
+
+    expect(screen.queryByText("Enter your full name")).not.toBeInTheDocument();
+    expect(screen.queryByText("Enter a password")).not.toBeInTheDocument();
+    expect(screen.queryByText("Confirm your password")).not.toBeInTheDocument();
+  });
+
+  it("calls the handleSubmit prop when valid", async () => {
+    const { user } = renderWithSetup(
+      <ConfirmInviteForm
+        defaultFormData={defaultFormData}
+        handleSubmit={handleSubmitSpy}
+      />
+    );
+
+    await user.type(screen.getByLabelText("Password"), "p@ssw0rd");
+    await user.type(screen.getByLabelText("Confirm password"), "p@ssw0rd");
+    await user.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(handleSubmitSpy).toHaveBeenCalledWith({
+      ...defaultFormData,
+      password: "p@ssw0rd",
+      password_confirmation: "p@ssw0rd",
+    });
+  });
+
+  describe("name input", () => {
+    it("validates the field must be present", async () => {
+      const { user } = renderWithSetup(
+        <ConfirmInviteForm
+          defaultFormData={{ ...defaultFormData, ...{ name: "" } }}
+          handleSubmit={handleSubmitSpy}
+        />
+      );
+
+      await user.click(screen.getByRole("button", { name: "Submit" }));
+
+      expect(
+        await screen.findByText("Enter your full name")
+      ).toBeInTheDocument();
+    });
+  });
+
+  describe("password input", () => {
+    it("validates the field must be present", async () => {
+      const { user } = renderWithSetup(
+        <ConfirmInviteForm
+          defaultFormData={defaultFormData}
+          handleSubmit={handleSubmitSpy}
+        />
+      );
+
+      await user.click(screen.getByRole("button", { name: "Submit" }));
+
+      expect(await screen.findByText("Enter a password")).toBeInTheDocument();
+    });
+  });
+
+  describe("password_confirmation input", () => {
+    it("validates the password_confirmation matches the password", async () => {
+      const { user } = renderWithSetup(
+        <ConfirmInviteForm
+          defaultFormData={defaultFormData}
+          handleSubmit={handleSubmitSpy}
+        />
+      );
+
+      await user.type(screen.getByLabelText("Password"), "p@ssw0rd");
+      await user.type(
+        screen.getByLabelText("Confirm password"),
+        "another password"
+      );
+      await user.click(screen.getByRole("button", { name: "Submit" }));
+
+      const passwordError = screen.getByText("Match the password above");
+      expect(passwordError).toBeInTheDocument();
+    });
+
+    it("validates the field must be present", async () => {
+      const { user } = renderWithSetup(
+        <ConfirmInviteForm
+          defaultFormData={defaultFormData}
+          handleSubmit={handleSubmitSpy}
+        />
+      );
+
+      await user.click(screen.getByRole("button", { name: "Submit" }));
+
+      const passwordError = screen.getByText("Confirm your password");
+
+      expect(passwordError).toBeInTheDocument();
+    });
+  });
+});
