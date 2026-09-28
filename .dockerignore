@@ -9,3 +9,10 @@ docs
 handbook
 infrastructure
 tools/wix-docker
+*.mp4
+*.gif
+*.zip
+*.tar.gz
+test/
+cmd/fleetctl
+meshmdm-linux-amd64*

@@ -11,6 +11,7 @@ COPY . .
 
 # 1. Generate embedded assets before compilation (frontend templates, React HTML, logos)
 RUN go run -mod=mod github.com/kevinburke/go-bindata/go-bindata -pkg bindata -tags full \
+    -ignore "\.(mp4|gif)" \
     -o server/bindata/generated.go \
     frontend/templates/ assets/... server/mail/templates
 
