@@ -10,6 +10,11 @@ ENV GOTOOLCHAIN=auto
 # Copy full source tree so local tool packages resolve properly
 COPY . .
 
+# Generate embedded assets before compilation (frontend templates, React HTML, logos)
+RUN go run -mod=mod github.com/kevinburke/go-bindata/go-bindata -pkg=bindata -tags full \
+    -o=server/bindata/generated.go \
+    frontend/templates/ assets/... server/mail/templates
+
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=mod -tags full -ldflags="-w -s" -o /bin/meshmdm ./cmd/fleet
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=mod -tags full -ldflags="-w -s" -o /bin/meshmdmctl ./cmd/fleetctl
 
