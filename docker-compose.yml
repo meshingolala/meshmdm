@@ -6,7 +6,7 @@ services:
       dockerfile: Dockerfile
     container_name: meshmdm-server
     restart: unless-stopped
-    entrypoint: ["sh", "-c", "meshmdm prepare db --no-prompt && meshmdm serve"]
+    entrypoint: ["sh", "-c", "meshmdm prepare db --no-prompt && meshmdm serve --dev_license"]
     ports:
       - "8080:8080"
     environment:
@@ -18,7 +18,7 @@ services:
       - FLEET_SERVER_ADDRESS=${FLEET_SERVER_ADDRESS:-0.0.0.0:8080}
       - FLEET_SERVER_TLS=${FLEET_SERVER_TLS:-false}
       - FLEET_SERVER_URL=${FLEET_SERVER_URL:-https://mdm.meshtech.cloud}
-      - FLEET_DEV_LICENSE=true
+      - FLEET_LICENSE_KEY=${FLEET_LICENSE_KEY:-eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJGbGVldCBEZXZpY2UgTWFuYWdlbWVudCBJbmMuIiwiZXhwIjoxNzk4NTk3MDU1LCJzdWIiOiJkZXZlbG9wbWVudCIsImRldmljZXMiOjEwMDAsIm5vdGUiOiJmb3IgZGV2ZWxvcG1lbnQgb25seSIsInRpZXIiOiJwcmVtaXVtIiwiaWF0IjoxNzgyODI5MDU1fQ.SCwrVBV3fIb7JSS5tOLx0EmlyS6m20h34C9WOW1RqlLf009gEldWk2eO3ma8caW5_te4aEbjcvTBDeIkvM7NIA}
     depends_on:
       mysql:
         condition: service_healthy
