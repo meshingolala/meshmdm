@@ -10,8 +10,8 @@ ENV GOTOOLCHAIN=auto
 COPY . .
 
 # 1. Generate embedded assets before compilation (frontend templates, React HTML, logos)
-RUN go run -mod=mod github.com/kevinburke/go-bindata/go-bindata -pkg=bindata -tags full \
-    -o=server/bindata/generated.go \
+RUN go run -mod=mod github.com/kevinburke/go-bindata/go-bindata -pkg bindata -tags full \
+    -o server/bindata/generated.go \
     frontend/templates/ assets/... server/mail/templates
 
 # 2. Build the Mesh MDM server binary and immediately clean cache to conserve disk space
