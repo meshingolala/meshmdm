@@ -444,7 +444,7 @@ func (hsr HostScriptResult) HostTimeout(waitForResultTime time.Duration) bool {
 
 const (
 	SavedScriptMaxRuneLen   = 500000
-	UnsavedScriptMaxRuneLen = 10000
+	UnsavedScriptMaxRuneLen = 50000
 )
 
 // anchored, so that it matches to the end of the line

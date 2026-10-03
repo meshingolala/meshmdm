@@ -546,7 +546,7 @@ const (
 	RunScriptsOrbitDisabledErrMsg          = "Couldn't run script. To run a script, deploy the fleetd agent with --enable-scripts."
 	RunScriptAsyncScriptEnqueuedMsg        = "Script is running or will run when the host comes online."
 	RunScriptSavedMaxLenErrMsg             = "Script is too large. It's limited to 500,000 characters (approximately 10,000 lines)."
-	RunScripUnsavedMaxLenErrMsg            = "Script is too large. It's limited to 10,000 characters (approximately 125 lines)."
+	RunScripUnsavedMaxLenErrMsg            = "Script is too large. It's limited to 50,000 characters (approximately 600 lines)."
 	RunScriptGatewayTimeoutErrMsg          = "Gateway timeout. Fleet didn't hear back from the host and doesn't know if the script ran. Please make sure your load balancer timeout isn't shorter than the Fleet server timeout."
 	RunScriptFleetVarsFailedErrMsg         = "Fleet couldn't resolve variables in this script. See the script output for details."
 
