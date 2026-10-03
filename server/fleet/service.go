@@ -402,6 +402,9 @@ type Service interface {
 	QuarantineHost(ctx context.Context, hostID uint) error
 	UnquarantineHost(ctx context.Context, hostID uint) error
 	GetP2PStats(ctx context.Context) (*P2PStats, error)
+	RegisterP2PSeeder(ctx context.Context, seeder P2PSeeder) (*P2PSeeder, error)
+	ListP2PSeeders(ctx context.Context, subnet, kbArticleID string) ([]P2PSeeder, error)
+	RecordP2PTransfer(ctx context.Context, record P2PTransferRecord) error
 	// GetQueryReportResults returns the stored results of a query for hosts the requestor has access
 	// to, along with the total count of matching rows. Pagination metadata is returned only when
 	// opts.PerPage is set.

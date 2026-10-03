@@ -3,6 +3,8 @@ const API_VERSION = "latest";
 export default {
   SCRIPTS_AI: `/${API_VERSION}/fleet/scripts/ai`,
   MESH_P2P_STATS: `/${API_VERSION}/fleet/mesh/p2p/stats`,
+  MESH_P2P_SEEDERS: `/${API_VERSION}/fleet/mesh/p2p/seeders`,
+  MESH_P2P_TRANSFERS: `/${API_VERSION}/fleet/mesh/p2p/transfers`,
   HOST_QUARANTINE: (id: number): string => `/${API_VERSION}/fleet/hosts/${id}/quarantine`,
   HOST_UNQUARANTINE: (id: number): string => `/${API_VERSION}/fleet/hosts/${id}/unquarantine`,
   // activities

@@ -144,6 +144,7 @@ import { parseHostSoftwareQueryParams } from "../cards/Software/HostSoftware";
 import UserCard from "../cards/User";
 import UpdateEndUserModal from "../cards/User/components/UpdateEndUserModal";
 import VitalsCard from "../cards/Vitals";
+import WindowsUpdatesCard from "../cards/WindowsUpdates";
 import {
   HostMdmDeviceStatusUIState,
   getHostDeviceStatusUIState,
@@ -1849,6 +1850,12 @@ const HostDetailsPage = ({
                     isLoading={isLoadingHost}
                     onUsersTableSearchChange={onUsersTableSearchChange}
                     hostUsersEnabled={featuresConfig?.enable_host_users}
+                  />
+                )}
+                {isWindowsHost && (
+                  <WindowsUpdatesCard
+                    host={host}
+                    className={fullWidthCardClass}
                   />
                 )}
                 {showCertificatesCard && (

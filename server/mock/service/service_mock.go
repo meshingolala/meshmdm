@@ -6128,3 +6128,15 @@ func (s *Service) UnquarantineHost(ctx context.Context, hostID uint) error {
 func (s *Service) GetP2PStats(ctx context.Context) (*fleet.P2PStats, error) {
 	return &fleet.P2PStats{}, nil
 }
+
+func (s *Service) RegisterP2PSeeder(ctx context.Context, seeder fleet.P2PSeeder) (*fleet.P2PSeeder, error) {
+	return &seeder, nil
+}
+
+func (s *Service) ListP2PSeeders(ctx context.Context, subnet, kbArticleID string) ([]fleet.P2PSeeder, error) {
+	return []fleet.P2PSeeder{}, nil
+}
+
+func (s *Service) RecordP2PTransfer(ctx context.Context, record fleet.P2PTransferRecord) error {
+	return nil
+}
