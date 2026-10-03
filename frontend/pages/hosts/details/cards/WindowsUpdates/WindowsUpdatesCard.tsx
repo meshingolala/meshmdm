@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Button from "components/buttons/Button";
 import Card from "components/Card";
 import CardHeader from "components/CardHeader";
@@ -25,22 +25,119 @@ interface IBuildInfo {
   }>;
 }
 
+interface IPatchStatus {
+  status: "idle" | "running" | "completed" | "failed";
+  stage?: string;
+  progress?: number;
+  message?: string;
+  exit_code?: number;
+  reboot_required?: boolean;
+  size_mb?: number;
+  download_time_sec?: number;
+  completed_at?: string;
+}
+
 const baseClass = "windows-updates-card";
 
-const WindowsUpdatesCard: React.FC<IWindowsUpdatesCardProps> = ({
-  host,
-  className,
-}) => {
+// Translate Windows Update / WUSA error codes into plain English
+const translateWusaExitCode = (code?: number): { title: string; explanation: string; isSuccess: boolean } => {
+  if (code === undefined || code === null) {
+    return { title: "Unknown Status", explanation: "No exit code recorded yet.", isSuccess: false };
+  }
+  switch (code) {
+    case 0:
+      return {
+        title: "Success (0x0)",
+        explanation: "The update package was successfully staged and installed without requiring an immediate reboot.",
+        isSuccess: true,
+      };
+    case 3010:
+      return {
+        title: "Success — Reboot Required (3010 / 0xBC2)",
+        explanation: "The cumulative update package was successfully applied to the Windows Servicing Stack! The host must be restarted to finalize build 26200.9550.",
+        isSuccess: true,
+      };
+    case 2359302:
+    case -2145124329: // 0x80240017
+      return {
+        title: "Already Installed (0x80240017)",
+        explanation: "This KB update or a newer cumulative superseding rollup is already installed on this machine.",
+        isSuccess: true,
+      };
+    case -2145103860: // 0x8024500C
+      return {
+        title: "GPO Redirector Blocked (0x8024500C)",
+        explanation: "Windows Update policy (WSUS) is blocking network locations. Standalone MSU offline deployment bypasses this.",
+        isSuccess: false,
+      };
+    case -2145124316: // 0x80240024
+      return {
+        title: "Not Applicable (0x80240024)",
+        explanation: "This update package is not applicable to the current architecture or major build of Windows.",
+        isSuccess: false,
+      };
+    case -2147024784: // 0x80070070
+    case -2147024888: // 0x80070008
+      return {
+        title: "Insufficient Disk Space (0x80070070)",
+        explanation: "The system drive does not have enough free space to extract and apply the 4.7 GB update package.",
+        isSuccess: false,
+      };
+    case -2147024891: // 0x80070005
+      return {
+        title: "Access Denied (0x80070005)",
+        explanation: "The script executor did not have elevated SYSTEM / Administrator permissions to invoke WUSA.",
+        isSuccess: false,
+      };
+    default:
+      return {
+        title: `Exit Code ${code} (0x${(code >>> 0).toString(16).toUpperCase()})`,
+        explanation: "Installation did not complete normally. Inspect C:\\Windows\\Logs\\CBS\\CBS.log on the host for specific CBS servicing errors.",
+        isSuccess: false,
+      };
+  }
+};
+
+const formatErrorReason = (err: any): string => {
+  if (!err) return "Unknown error occurred.";
+  if (typeof err === "string") return err;
+  if (err.response?.data?.errors?.[0]?.reason) return err.response.data.errors[0].reason;
+  if (err.response?.data?.message) return err.response.data.message;
+  if (err.message) return err.message;
+  if (err.status === 524) return "Operation timed out via proxy (the task is running in the background on the host).";
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+};
+
+const WindowsUpdatesCard: React.FC<IWindowsUpdatesCardProps> = ({ host, className }) => {
   const [isQuerying, setIsQuerying] = useState(false);
   const [buildInfo, setBuildInfo] = useState<IBuildInfo | null>(null);
   const [showDeployModal, setShowDeployModal] = useState(false);
+  const [activeTab, setActiveTab] = useState<"deploy" | "reasons">("deploy");
+
+  // Deployment form state
   const [kbArticle, setKbArticle] = useState("KB5124010");
   const [seederUrl, setSeederUrl] = useState("http://192.168.60.15:8888/update.msu");
   const [useP2P, setUseP2P] = useState(true);
   const [autoReboot, setAutoReboot] = useState(true);
-  const [isDeploying, setIsDeploying] = useState(false);
-  const [deployOutput, setDeployOutput] = useState<string | null>(null);
-  const [deploySuccess, setDeploySuccess] = useState<boolean | null>(null);
+
+  // Deployment execution state
+  const [isLaunching, setIsLaunching] = useState(false);
+  const [patchStatus, setPatchStatus] = useState<IPatchStatus>({ status: "idle" });
+  const [recentLog, setRecentLog] = useState<string>("");
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Clean up polling timer
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, []);
 
   // 1. Live Query Host Build & Patch Level
   const handleQueryBuild = async () => {
@@ -80,104 +177,230 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
         notify.error("No response received from host script executor.");
       }
     } catch (err: any) {
-      notify.error(`Failed to inspect host build: ${err.message || err}`);
+      notify.error(`Failed to inspect host build: ${formatErrorReason(err)}`);
     } finally {
       setIsQuerying(false);
     }
   };
 
-  // 2. Deploy KB Update (bypassing WSUS/GPO redirectors using WUSA)
-  const handleDeployKB = async () => {
-    setIsDeploying(true);
-    setDeployOutput(null);
-    setDeploySuccess(null);
-
-    const deployScript = `<# Mesh MDM Automated KB Deployment #>
-$ErrorActionPreference = "Stop"
-$kb = "${kbArticle}"
-$sourceUrl = "${seederUrl}"
-$destDir = "$env:SystemRoot\\Temp"
-$destFile = "$destDir\\windows11.0-$kb-x64.msu"
-
-Write-Host "=========================================================="
-Write-Host "  Mesh MDM: Offline KB Deployment - $kb"
-Write-Host "=========================================================="
-
-Write-Host "Source: $sourceUrl"
-Write-Host "Destination: $destFile"
-
-$startTime = Get-Date
-$webClient = New-Object System.Net.WebClient
-$webClient.DownloadFile($sourceUrl, $destFile)
-
-$duration = [math]::Round(((Get-Date) - $startTime).TotalSeconds, 1)
-$sizeMB = [math]::Round((Get-Item $destFile).Length / 1MB, 2)
-Write-Host "Download complete: $sizeMB MB in \${duration}s"
-
-Write-Host "Executing wusa.exe in unattended silent mode..."
-$process = Start-Process -FilePath "wusa.exe" -ArgumentList "\`"$destFile\`" /quiet /norestart" -Wait -PassThru
-Write-Host "WUSA Exit Code: $($process.ExitCode)"
-
-Remove-Item -Path $destFile -Force -ErrorAction SilentlyContinue
-Write-Host "Temporary payload purged from disk."
-
-if ($process.ExitCode -in 0, 3010) {
-    Write-Host "SUCCESS: $kb successfully applied to servicing stack!"
-    ${
-      autoReboot
-        ? 'Write-Host "Scheduling system restart in 30 seconds..."\n    shutdown /r /t 30 /c "Mesh MDM: Finalizing Cumulative Update install"'
-        : 'Write-Host "Reboot deferred by administrator policy."'
-    }
-    Exit 0
-} else {
-    Write-Host "FAILED: WUSA returned exit code $($process.ExitCode). Review C:\\Windows\\Logs\\CBS\\CBS.log for details."
-    Exit $process.ExitCode
-}`;
+  // Poll progress from host
+  const pollHostProgress = async () => {
+    const pollScript = [
+      `$statusFile = "$env:SystemRoot\\Temp\\mesh_patch_status.json"`,
+      `$logFile = "$env:SystemRoot\\Temp\\mesh_patch_install.log"`,
+      `$status = if (Test-Path $statusFile) { Get-Content $statusFile -Raw } else { '{"status":"idle","message":"No deployment active"}' }`,
+      `$log = if (Test-Path $logFile) { Get-Content $logFile -Tail 15 | Out-String } else { '' }`,
+      `[PSCustomObject]@{ status_json = $status; recent_log = $log } | ConvertTo-Json -Compress`,
+    ].join('\r\n');
 
     try {
       const resp = await scriptsAPI.runScriptSync({
         host_id: host.id,
-        script_contents: deployScript,
+        script_contents: pollScript,
       });
 
-      const output = resp?.output || resp?.message || "Execution completed";
-      setDeployOutput(output);
+      if (resp && resp.output) {
+        try {
+          const parsed = JSON.parse(resp.output.trim());
+          if (parsed.status_json) {
+            const statusObj: IPatchStatus = JSON.parse(parsed.status_json);
+            setPatchStatus(statusObj);
 
-      const isSuccess = resp?.exit_code === 0 || output.includes("SUCCESS");
-      setDeploySuccess(isSuccess);
+            if (parsed.recent_log) {
+              setRecentLog(parsed.recent_log);
+            }
 
-      if (isSuccess) {
-        notify.success(`${kbArticle} installed successfully!`);
-        // Record telemetry if P2P was used
-        if (useP2P) {
-          p2pAPI
-            .recordTransfer({
-              source_host_id: 1,
-              target_host_id: host.id,
-              kb_article_id: kbArticle,
-              bytes_served: 4680000000,
-              completed_at: new Date().toISOString(),
-            })
-            .catch(() => {});
+            if (statusObj.status === "completed") {
+              if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+              notify.success(`Deployment of ${kbArticle} completed!`);
+              if (useP2P) {
+                p2pAPI.recordTransfer({
+                  source_host_id: 1,
+                  target_host_id: host.id,
+                  kb_article_id: kbArticle,
+                  bytes_served: 4680000000,
+                  completed_at: new Date().toISOString(),
+                }).catch(() => {});
+              }
+            } else if (statusObj.status === "failed") {
+              if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+              notify.error(`Deployment of ${kbArticle} failed.`);
+            }
+          }
+        } catch {
+          // ignore transient JSON parsing error
         }
-      } else {
-        notify.error("Installation completed with warnings or error.");
       }
-    } catch (err: any) {
-      setDeploySuccess(false);
-      setDeployOutput(err.message || String(err));
-      notify.error(`Deployment failed: ${err.message || err}`);
-    } finally {
-      setIsDeploying(false);
+    } catch {
+      // ignore network blips during polling
     }
   };
 
+  // 2. Launch Robust Asynchronous Deployment
+  const handleLaunchDeployment = async () => {
+    setIsLaunching(true);
+    setPatchStatus({ status: "running", stage: "preflight", progress: 10, message: "Performing pre-flight checks..." });
+    setRecentLog("");
+
+    const launchScript = [
+      `$ErrorActionPreference = "Stop"`,
+      `$kb = "${kbArticle}"`,
+      `$sourceUrl = "${seederUrl}"`,
+      `$autoReboot = ${autoReboot ? "$true" : "$false"}`,
+      `$statusFile = "$env:SystemRoot\\Temp\\mesh_patch_status.json"`,
+      `$logFile = "$env:SystemRoot\\Temp\\mesh_patch_install.log"`,
+      `$workerFile = "$env:SystemRoot\\Temp\\mesh_patch_worker.ps1"`,
+      ``,
+      `# Pre-flight Check: Disk Space`,
+      `$drive = Get-PSDrive C`,
+      `$freeGB = [math]::Round($drive.Free / 1GB, 2)`,
+      `if ($freeGB -lt 8) {`,
+      `    @{`,
+      `        status = "failed"`,
+      `        stage = "preflight_failed"`,
+      `        message = "Insufficient free disk space on C:\\ ($freeGB GB available). Cumulative updates require at least 8 GB free."`,
+      `        free_space_gb = $freeGB`,
+      `    } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+      `    Get-Content $statusFile -Raw`,
+      `    Exit 0`,
+      `}`,
+      ``,
+      `# Pre-flight Check: LAN Network Probe`,
+      `try {`,
+      `    $uri = New-Object System.Uri($sourceUrl)`,
+      `    $tcp = Test-NetConnection -ComputerName $uri.Host -Port $uri.Port -WarningAction SilentlyContinue`,
+      `    if (-not $tcp.TcpTestSucceeded) {`,
+      `        @{`,
+      `            status = "failed"`,
+      `            stage = "network_probe_failed"`,
+      `            message = "Cannot reach update source at $($uri.Host):$($uri.Port). Ensure LAN seeder service is running and firewall port $($uri.Port) is open."`,
+      `            source_url = $sourceUrl`,
+      `        } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+      `        Get-Content $statusFile -Raw`,
+      `        Exit 0`,
+      `    }`,
+      `} catch {}`,
+      ``,
+      `# Initial Status`,
+      `@{`,
+      `    status = "running"`,
+      `    stage = "downloading"`,
+      `    progress = 25`,
+      `    message = "Pre-flight checks passed ($freeGB GB free). Downloading $kb from $sourceUrl..."`,
+      `    kb = $kb`,
+      `    start_time = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")`,
+      `} | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+      ``,
+      `# Worker script file`,
+      `$workerCode = @'`,
+      `param($kb, $sourceUrl, $autoReboot, $statusFile, $logFile)`,
+      `$destFile = "$env:SystemRoot\\Temp\\windows11.0-$kb-x64.msu"`,
+      `try {`,
+      `    "[$((Get-Date).ToString('HH:mm:ss'))] Starting download from $sourceUrl" | Out-File $logFile -Encoding utf8`,
+      `    $wc = New-Object System.Net.WebClient`,
+      `    $startTime = Get-Date`,
+      `    $wc.DownloadFile($sourceUrl, $destFile)`,
+      `    $downloadSec = [math]::Round(((Get-Date) - $startTime).TotalSeconds, 1)`,
+      `    $sizeMB = [math]::Round((Get-Item $destFile).Length / 1MB, 2)`,
+      `    "[$((Get-Date).ToString('HH:mm:ss'))] Download complete: $sizeMB MB in $downloadSec s" | Out-File $logFile -Append`,
+      ``,
+      `    @{`,
+      `        status = "running"`,
+      `        stage = "installing"`,
+      `        progress = 65`,
+      `        message = "Downloaded $sizeMB MB in $downloadSec s. Executing wusa.exe unattended..."`,
+      `        download_time_sec = $downloadSec`,
+      `        size_mb = $sizeMB`,
+      `    } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+      ``,
+      `    "[$((Get-Date).ToString('HH:mm:ss'))] Invoking wusa.exe /quiet /norestart" | Out-File $logFile -Append`,
+      `    $proc = Start-Process -FilePath "wusa.exe" -ArgumentList ('"''' + $destFile + '''" /quiet /norestart') -Wait -PassThru`,
+      `    $exitCode = $proc.ExitCode`,
+      `    "[$((Get-Date).ToString('HH:mm:ss'))] wusa.exe exited with code: $exitCode" | Out-File $logFile -Append`,
+      ``,
+      `    Remove-Item -Path $destFile -Force -ErrorAction SilentlyContinue`,
+      `    "[$((Get-Date).ToString('HH:mm:ss'))] Temporary payload purged from disk." | Out-File $logFile -Append`,
+      ``,
+      `    if ($exitCode -in 0, 3010) {`,
+      `        $rebootNeeded = ($exitCode -eq 3010)`,
+      `        $msg = "Update $kb installed successfully! (ExitCode: $exitCode)"`,
+      `        if ($autoReboot -eq "True" -or $autoReboot -eq $true) {`,
+      `            $msg += " Scheduling restart in 30 seconds."`,
+      `            shutdown /r /t 30 /c "Mesh MDM: Finalizing update $kb"`,
+      `        }`,
+      `        @{`,
+      `            status = "completed"`,
+      `            stage = "finished"`,
+      `            progress = 100`,
+      `            message = $msg`,
+      `            exit_code = $exitCode`,
+      `            reboot_required = $rebootNeeded`,
+      `            completed_at = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")`,
+      `        } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+      `    } else {`,
+      `        @{`,
+      `            status = "failed"`,
+      `            stage = "installation_failed"`,
+      `            progress = 100`,
+      `            message = "WUSA installation failed with exit code $exitCode."`,
+      `            exit_code = $exitCode`,
+      `        } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+      `    }`,
+      `} catch {`,
+      `    "[$((Get-Date).ToString('HH:mm:ss'))] Fatal Error: $_" | Out-File $logFile -Append`,
+      `    @{`,
+      `        status = "failed"`,
+      `        stage = "worker_exception"`,
+      `        progress = 100`,
+      `        message = "Fatal error during update execution: $_"`,
+      `    } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+      `}`,
+      `'@`,
+      `Set-Content -Path $workerFile -Value $workerCode -Force`,
+      `Start-Process -FilePath "powershell.exe" -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -File "' + $workerFile + '" -kb "' + $kb + '" -sourceUrl "' + $sourceUrl + '" -autoReboot ' + ($autoReboot ? '$true' : '$false') + ' -statusFile "' + $statusFile + '" -logFile "' + $logFile + '"') -WindowStyle Hidden`,
+      `Get-Content $statusFile -Raw`,
+    ].join('\r\n');
+
+    try {
+      const resp = await scriptsAPI.runScriptSync({
+        host_id: host.id,
+        script_contents: launchScript,
+      });
+
+      if (resp && resp.output) {
+        try {
+          const parsed = JSON.parse(resp.output.trim());
+          setPatchStatus(parsed);
+          if (parsed.status === "failed") {
+            notify.error(`Pre-flight check failed: ${parsed.message}`);
+            setIsLaunching(false);
+            return;
+          }
+        } catch {}
+      }
+
+      notify.success("Deployment worker launched on host. Monitoring live progress...");
+
+      // Start live polling every 4 seconds
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = setInterval(pollHostProgress, 4000);
+    } catch (err: any) {
+      notify.error(`Failed to launch deployment: ${formatErrorReason(err)}`);
+      setPatchStatus({
+        status: "failed",
+        stage: "launch_failed",
+        message: formatErrorReason(err),
+      });
+    } finally {
+      setIsLaunching(false);
+    }
+  };
+
+  const codeDetails = patchStatus.exit_code !== undefined ? translateWusaExitCode(patchStatus.exit_code) : null;
+
   return (
     <div style={{ marginBottom: "24px" }}>
-      <Card
-        paddingSize="xlarge"
-        className={`${baseClass} ${className || ""}`}
-      >
+      <Card paddingSize="xlarge" className={`${baseClass} ${className || ""}`}>
         <CardHeader
           header={
             <div style={{ display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center" }}>
@@ -293,113 +516,233 @@ if ($process.ExitCode -in 0, 3010) {
           </div>
         )}
 
-        {/* Deploy KB Package Form */}
+        {/* Deploy KB Package Panel */}
         {showDeployModal && (
           <div
             style={{
-              background: "rgba(0,0,0,0.35)",
-              padding: "16px",
-              borderRadius: "6px",
-              border: "1px solid rgba(0, 229, 255, 0.3)",
+              background: "rgba(0,0,0,0.45)",
+              padding: "20px",
+              borderRadius: "8px",
+              border: "1px solid rgba(0, 229, 255, 0.35)",
               marginTop: "16px",
             }}
           >
-            <h3 style={{ margin: "0 0 12px 0", fontSize: "14px", color: "#00e5ff" }}>
-              ⚡ Deploy Offline Standalone Cumulative Update
-            </h3>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: "12px", marginBottom: "12px" }}>
-              <div>
-                <label style={{ display: "block", fontSize: "12px", marginBottom: "4px", opacity: 0.8 }}>
-                  KB Article ID:
-                </label>
-                <input
-                  type="text"
-                  value={kbArticle}
-                  onChange={(e) => setKbArticle(e.target.value)}
-                  style={{
-                    width: "100%",
-                    padding: "8px 10px",
-                    background: "#0f141f",
-                    border: "1px solid #2c3a58",
-                    color: "#fff",
-                    borderRadius: "4px",
-                  }}
-                />
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: "12px", marginBottom: "4px", opacity: 0.8 }}>
-                  Source Package URL (LAN Seeder or WAN):
-                </label>
-                <input
-                  type="text"
-                  value={seederUrl}
-                  onChange={(e) => setSeederUrl(e.target.value)}
-                  style={{
-                    width: "100%",
-                    padding: "8px 10px",
-                    background: "#0f141f",
-                    border: "1px solid #2c3a58",
-                    color: "#fff",
-                    borderRadius: "4px",
-                  }}
-                />
-              </div>
-            </div>
-
-            <div style={{ display: "flex", gap: "20px", alignItems: "center", marginBottom: "16px" }}>
-              <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", cursor: "pointer" }}>
-                <input
-                  type="checkbox"
-                  checked={useP2P}
-                  onChange={(e) => setUseP2P(e.target.checked)}
-                />
-                <span>Enable Mesh LAN P2P Telemetry</span>
-              </label>
-              <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", cursor: "pointer" }}>
-                <input
-                  type="checkbox"
-                  checked={autoReboot}
-                  onChange={(e) => setAutoReboot(e.target.checked)}
-                />
-                <span>Schedule Graceful Reboot in 30 seconds after install</span>
-              </label>
-            </div>
-
-            <div style={{ display: "flex", gap: "10px" }}>
-              <Button
-                variant="default"
-                size="small"
-                onClick={handleDeployKB}
-                isLoading={isDeploying}
-              >
-                {isDeploying ? "Deploying & Installing WUSA..." : "🚀 Execute Silent Unattended Install"}
-              </Button>
-              <Button
-                variant="secondary"
-                size="small"
-                onClick={() => setShowDeployModal(false)}
-              >
-                Cancel
-              </Button>
-            </div>
-
-            {deployOutput && (
-              <div
+            {/* Tabs: Deployment vs Why It Could Fail */}
+            <div style={{ display: "flex", gap: "12px", borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "8px", marginBottom: "16px" }}>
+              <button
+                type="button"
+                onClick={() => setActiveTab("deploy")}
                 style={{
-                  marginTop: "16px",
-                  padding: "12px",
+                  background: activeTab === "deploy" ? "rgba(0,229,255,0.15)" : "transparent",
+                  color: activeTab === "deploy" ? "#00e5ff" : "#b3c0d8",
+                  border: "none",
+                  padding: "6px 14px",
                   borderRadius: "4px",
-                  background: "#0a0d14",
-                  border: deploySuccess ? "1px solid #2ecc71" : "1px solid #e74c3c",
-                  fontSize: "12px",
-                  fontFamily: "monospace",
-                  whiteSpace: "pre-wrap",
-                  maxHeight: "200px",
-                  overflowY: "auto",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  fontSize: "13px",
                 }}
               >
-                {deployOutput}
+                ⚡ Deploy Update Package
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("reasons")}
+                style={{
+                  background: activeTab === "reasons" ? "rgba(0,229,255,0.15)" : "transparent",
+                  color: activeTab === "reasons" ? "#00e5ff" : "#b3c0d8",
+                  border: "none",
+                  padding: "6px 14px",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  fontSize: "13px",
+                }}
+              >
+                ℹ️ Why Could a Deployment Fail? (Diagnostic Guide)
+              </button>
+            </div>
+
+            {activeTab === "deploy" ? (
+              <div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: "12px", marginBottom: "12px" }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12px", marginBottom: "4px", opacity: 0.8 }}>
+                      KB Article ID:
+                    </label>
+                    <input
+                      type="text"
+                      value={kbArticle}
+                      onChange={(e) => setKbArticle(e.target.value)}
+                      style={{
+                        width: "100%",
+                        padding: "8px 10px",
+                        background: "#0f141f",
+                        border: "1px solid #2c3a58",
+                        color: "#fff",
+                        borderRadius: "4px",
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12px", marginBottom: "4px", opacity: 0.8 }}>
+                      Package Source URL (LAN Seeder or WAN):
+                    </label>
+                    <input
+                      type="text"
+                      value={seederUrl}
+                      onChange={(e) => setSeederUrl(e.target.value)}
+                      style={{
+                        width: "100%",
+                        padding: "8px 10px",
+                        background: "#0f141f",
+                        border: "1px solid #2c3a58",
+                        color: "#fff",
+                        borderRadius: "4px",
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", gap: "20px", alignItems: "center", marginBottom: "16px" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={useP2P}
+                      onChange={(e) => setUseP2P(e.target.checked)}
+                    />
+                    <span>Record Mesh P2P Bandwidth Telemetry (saves 4.68 GB WAN)</span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={autoReboot}
+                      onChange={(e) => setAutoReboot(e.target.checked)}
+                    />
+                    <span>Schedule 30-Second Graceful Restart upon success</span>
+                  </label>
+                </div>
+
+                {/* Progress Bar & Stage Indicator */}
+                {patchStatus.status !== "idle" && (
+                  <div style={{ background: "rgba(0,0,0,0.3)", padding: "14px", borderRadius: "6px", marginBottom: "16px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
+                      <span style={{ fontSize: "13px", fontWeight: 600, color: patchStatus.status === "completed" ? "#2ecc71" : patchStatus.status === "failed" ? "#e74c3c" : "#00e5ff" }}>
+                        {patchStatus.status === "running" && `⟳ Stage: ${patchStatus.stage || "processing"}...`}
+                        {patchStatus.status === "completed" && "✓ Installation Succeeded!"}
+                        {patchStatus.status === "failed" && "❌ Installation Failed"}
+                      </span>
+                      <span style={{ fontSize: "12px", opacity: 0.8 }}>
+                        {patchStatus.progress || 0}% Complete
+                      </span>
+                    </div>
+
+                    {/* Progress track */}
+                    <div style={{ width: "100%", height: "8px", background: "rgba(255,255,255,0.1)", borderRadius: "4px", overflow: "hidden" }}>
+                      <div
+                        style={{
+                          width: `${patchStatus.progress || 0}%`,
+                          height: "100%",
+                          background: patchStatus.status === "completed" ? "#2ecc71" : patchStatus.status === "failed" ? "#e74c3c" : "linear-gradient(90deg, #00e5ff, #3498db)",
+                          transition: "width 0.4s ease",
+                        }}
+                      />
+                    </div>
+
+                    <div style={{ fontSize: "12px", marginTop: "8px", opacity: 0.9 }}>
+                      {patchStatus.message}
+                    </div>
+
+                    {codeDetails && (
+                      <div style={{ marginTop: "10px", padding: "8px 12px", borderRadius: "4px", background: codeDetails.isSuccess ? "rgba(46, 204, 113, 0.15)" : "rgba(231, 76, 60, 0.15)", border: codeDetails.isSuccess ? "1px solid #2ecc71" : "1px solid #e74c3c" }}>
+                        <strong>{codeDetails.title}:</strong> {codeDetails.explanation}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div style={{ display: "flex", gap: "10px" }}>
+                  <Button
+                    variant="default"
+                    size="small"
+                    onClick={handleLaunchDeployment}
+                    isLoading={isLaunching || patchStatus.status === "running"}
+                  >
+                    {isLaunching || patchStatus.status === "running"
+                      ? "⚡ Staging Update on Host..."
+                      : "🚀 Execute Silent Unattended Install"}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="small"
+                    onClick={pollHostProgress}
+                  >
+                    🔄 Refresh Progress
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="small"
+                    onClick={() => setShowDeployModal(false)}
+                  >
+                    Close
+                  </Button>
+                </div>
+
+                {recentLog && (
+                  <div style={{ marginTop: "16px" }}>
+                    <div style={{ fontSize: "11px", fontWeight: 600, opacity: 0.7, marginBottom: "4px", textTransform: "uppercase" }}>
+                      Live Host Execution Log (C:\Windows\Temp\mesh_patch_install.log):
+                    </div>
+                    <pre
+                      style={{
+                        padding: "10px",
+                        background: "#080b11",
+                        border: "1px solid #1a2333",
+                        borderRadius: "4px",
+                        fontSize: "11px",
+                        color: "#a4b5d4",
+                        maxHeight: "150px",
+                        overflowY: "auto",
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {recentLog}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Tab 2: Why Could a Deployment Fail? */
+              <div style={{ fontSize: "13px", lineHeight: "1.6", color: "#c2d1e8" }}>
+                <h4 style={{ margin: "0 0 10px 0", color: "#00e5ff" }}>
+                  Common Root Causes for Windows Offline Update Failures:
+                </h4>
+                <div style={{ display: "grid", gap: "10px" }}>
+                  <div style={{ background: "rgba(0,0,0,0.3)", padding: "10px 14px", borderRadius: "6px" }}>
+                    <strong style={{ color: "#e74c3c" }}>1. LAN Seeder Network Unreachable:</strong>
+                    <div>If streaming from a local machine (e.g. <code>192.168.60.15:8888</code>), Windows Defender Firewall on the seeder machine must allow inbound TCP port 8888. The pre-flight check automatically validates this before downloading.</div>
+                  </div>
+
+                  <div style={{ background: "rgba(0,0,0,0.3)", padding: "10px 14px", borderRadius: "6px" }}>
+                    <strong style={{ color: "#e74c3c" }}>2. Insufficient Free Disk Space:</strong>
+                    <div>Cumulative updates (4.68 GB) require at least <strong>10–15 GB</strong> of free space on <code>C:\</code> to unpack CAB servicing manifests into <code>C:\Windows\SoftwareDistribution</code>.</div>
+                  </div>
+
+                  <div style={{ background: "rgba(0,0,0,0.3)", padding: "10px 14px", borderRadius: "6px" }}>
+                    <strong style={{ color: "#e74c3c" }}>3. CBS Reboot Pending Lock:</strong>
+                    <div>If a previous Servicing Stack Update (SSU) was staged but the machine hasn't rebooted yet, Windows Servicing will reject installing a newer Cumulative Update until the pending restart completes.</div>
+                  </div>
+
+                  <div style={{ background: "rgba(0,0,0,0.3)", padding: "10px 14px", borderRadius: "6px" }}>
+                    <strong style={{ color: "#e74c3c" }}>4. Package Not Applicable (0x80240024):</strong>
+                    <div>Occurs if the KB package architecture (e.g. ARM64 vs x64) does not match the processor, or if the major OS version does not match (e.g., Windows 10 vs Windows 11).</div>
+                  </div>
+
+                  <div style={{ background: "rgba(0,0,0,0.3)", padding: "10px 14px", borderRadius: "6px" }}>
+                    <strong style={{ color: "#2ecc71" }}>5. Exit Code 3010 is a SUCCESS:</strong>
+                    <div>Windows Update returns exit code <code>3010</code> (<code>ERROR_SUCCESS_REBOOT_REQUIRED</code>) when installation succeeds. This is not an error! A simple reboot activates the new build.</div>
+                  </div>
+                </div>
               </div>
             )}
           </div>
