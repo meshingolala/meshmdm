@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/fleetdm/fleet/v4/server/fleet"
 )
@@ -27,6 +28,7 @@ func (svc *Service) GetP2PStats(ctx context.Context) (*fleet.P2PStats, error) {
 	// Query active hosts count and calculate Mesh P2P network telemetry
 	hosts, err := svc.ds.ListHostsLiteByIDs(ctx, nil)
 	activePeers := make([]fleet.P2PPeerInfo, 0)
+	now := time.Now()
 	
 	if err == nil {
 		for i, h := range hosts {
@@ -39,7 +41,7 @@ func (svc *Service) GetP2PStats(ctx context.Context) (*fleet.P2PStats, error) {
 				IPAddress:    h.PrimaryIP,
 				CachedChunks: 1,
 				BytesServed:  0,
-				Status:       h.Status,
+				Status:       string(h.Status(now)),
 			})
 		}
 	}
