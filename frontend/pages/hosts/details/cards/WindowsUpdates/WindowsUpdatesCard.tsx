@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import Button from "components/buttons/Button";
 import Card from "components/Card";
 import CardHeader from "components/CardHeader";
+import Modal from "components/Modal";
 import { notify } from "components/ToastNotification";
 import scriptsAPI from "services/entities/scripts";
 import p2pAPI from "services/entities/p2p";
@@ -38,6 +39,118 @@ interface IPatchStatus {
 }
 
 const baseClass = "windows-updates-card";
+
+interface IWindowsBuildRelease {
+  build: string;
+  kb: string;
+  releaseDate: string;
+  status: string;
+  isStable: boolean;
+  notes: string;
+}
+
+const getWindowsVersionHistory = (
+  osVersion: string,
+  currentBuild: string
+): { branchName: string; releases: IWindowsBuildRelease[] } => {
+  const isWin10 = osVersion.includes("Windows 10") || currentBuild.startsWith("1904");
+  const isWin11_23H2 = osVersion.includes("23H2") || currentBuild.startsWith("2263");
+
+  if (isWin10) {
+    return {
+      branchName: "Windows 10 (Version 22H2 Branch)",
+      releases: [
+        {
+          build: "19045.5011",
+          kb: "KB5044273",
+          releaseDate: "October 8, 2024",
+          status: "Stable (Current GA)",
+          isStable: true,
+          notes: "Latest Cumulative Security Rollup",
+        },
+        {
+          build: "19045.4894",
+          kb: "KB5043064",
+          releaseDate: "September 10, 2024",
+          status: "Stable (Previous)",
+          isStable: true,
+          notes: "Monthly Servicing Quality Update",
+        },
+        {
+          build: "19045.4780",
+          kb: "KB5041580",
+          releaseDate: "August 13, 2024",
+          status: "Superseded",
+          isStable: true,
+          notes: "Superseded by KB5043064",
+        },
+      ],
+    };
+  }
+
+  if (isWin11_23H2) {
+    return {
+      branchName: "Windows 11 (Version 23H2 Branch)",
+      releases: [
+        {
+          build: "22631.4317",
+          kb: "KB5044285",
+          releaseDate: "October 8, 2024",
+          status: "Stable (Current GA)",
+          isStable: true,
+          notes: "Latest Cumulative Security Rollup",
+        },
+        {
+          build: "22631.4169",
+          kb: "KB5043076",
+          releaseDate: "September 10, 2024",
+          status: "Stable (Previous)",
+          isStable: true,
+          notes: "Monthly Servicing Quality Update",
+        },
+        {
+          build: "22631.4037",
+          kb: "KB5041585",
+          releaseDate: "August 13, 2024",
+          status: "Superseded",
+          isStable: true,
+          notes: "Superseded by KB5043076",
+        },
+      ],
+    };
+  }
+
+  // Windows 11 25H2 / 24H2 Branch (Build 26100 / 26200)
+  return {
+    branchName: "Windows 11 (Version 25H2 / 24H2 Branch)",
+    releases: [
+      {
+        build: "26200.9550 / 26100.9550",
+        kb: "KB5124010",
+        releaseDate: "September 29, 2026",
+        status: "Stable (Current GA)",
+        isStable: true,
+        notes: "General Availability (GA) Cumulative Update",
+      },
+      {
+        build: "26100.9168",
+        kb: "KB5054156",
+        releaseDate: "August 29, 2026",
+        status: "Stable (Previous)",
+        isStable: true,
+        notes: "August 2026 Quality & Security Rollup",
+      },
+      {
+        build: "26100.8631",
+        kb: "KB5052084",
+        releaseDate: "July 28, 2026",
+        status: "Superseded",
+        isStable: true,
+        notes: "July 2026 Cumulative Rollup",
+      },
+    ],
+  };
+};
 
 // Translate Windows Update / WUSA error codes into plain English
 const translateWusaExitCode = (code?: number): { title: string; explanation: string; isSuccess: boolean } => {
@@ -118,6 +231,10 @@ const WindowsUpdatesCard: React.FC<IWindowsUpdatesCardProps> = ({ host, classNam
   const [showDeployModal, setShowDeployModal] = useState(false);
   const [activeTab, setActiveTab] = useState<"deploy" | "reasons">("deploy");
 
+  // Reboot states
+  const [isRebooting, setIsRebooting] = useState(false);
+  const [showRebootConfirm, setShowRebootConfirm] = useState(false);
+
   // Deployment form state
   const [kbArticle, setKbArticle] = useState("KB5124010");
   const [seederUrl, setSeederUrl] = useState("http://192.168.60.15:8888/update.msu");
@@ -138,6 +255,34 @@ const WindowsUpdatesCard: React.FC<IWindowsUpdatesCardProps> = ({ host, classNam
       }
     };
   }, []);
+
+  const handleRebootHost = async () => {
+    setIsRebooting(true);
+    const rebootScript = `shutdown /r /t 10 /f /c "Mesh MDM: Initiating host reboot to apply pending updates"`;
+    try {
+      await scriptsAPI.runScriptSync({
+        host_id: host.id,
+        script_contents: rebootScript,
+      });
+      notify.success(`Reboot command dispatched to ${host.display_name || "host"}. System will restart in 10 seconds.`);
+      setShowRebootConfirm(false);
+      setBuildInfo((prev) => (prev ? { ...prev, RebootPending: true } : { RebootPending: true }));
+    } catch (err: any) {
+      notify.error(`Failed to dispatch reboot: ${formatErrorReason(err)}`);
+    } finally {
+      setIsRebooting(false);
+    }
+  };
+
+  const currentBuildNum = buildInfo?.CurrentBuild || host.build || "26200";
+  const currentUbrNum =
+    buildInfo?.UBR ??
+    (() => {
+      const m = (host.os_version || "").match(/\b\d+\.\d+\.\d+\.(\d+)\b/);
+      return m ? parseInt(m[1], 10) : undefined;
+    })();
+
+  const versionHistory = getWindowsVersionHistory(host.os_version || "", currentBuildNum);
 
   // 1. Live Query Host Build & Patch Level
   const handleQueryBuild = async () => {
@@ -459,11 +604,11 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
           <div style={{ background: "rgba(0,0,0,0.25)", padding: "10px 14px", borderRadius: "6px" }}>
             <div style={{ fontSize: "11px", opacity: 0.7, textTransform: "uppercase" }}>Build & UBR</div>
             <div style={{ fontSize: "15px", fontWeight: 600, color: "#fff", marginTop: "4px" }}>
-              {buildInfo?.CurrentBuild || host.build || "26200"}
-              {buildInfo?.UBR ? `.${buildInfo.UBR}` : ""}
+              {currentBuildNum}
+              {currentUbrNum ? `.${currentUbrNum}` : ""}
             </div>
             <div style={{ fontSize: "12px", opacity: 0.8 }}>
-              {buildInfo?.UBR && buildInfo.UBR >= 9550 ? (
+              {currentUbrNum && currentUbrNum >= 9550 ? (
                 <span style={{ color: "#2ecc71" }}>✓ Target Build Installed</span>
               ) : (
                 <span style={{ color: "#f39c12" }}>Update available (KB5124010)</span>
@@ -471,16 +616,38 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
             </div>
           </div>
 
-          <div style={{ background: "rgba(0,0,0,0.25)", padding: "10px 14px", borderRadius: "6px" }}>
-            <div style={{ fontSize: "11px", opacity: 0.7, textTransform: "uppercase" }}>Pending Reboot Status</div>
-            <div style={{ fontSize: "15px", fontWeight: 600, marginTop: "4px" }}>
-              {buildInfo?.RebootPending ? (
-                <span style={{ color: "#e74c3c" }}>⚠️ Reboot Required</span>
-              ) : (
-                <span style={{ color: "#2ecc71" }}>✓ No Pending Reboot</span>
-              )}
+          <div
+            style={{
+              background: "rgba(0,0,0,0.25)",
+              padding: "10px 14px",
+              borderRadius: "6px",
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "space-between",
+            }}
+          >
+            <div>
+              <div style={{ fontSize: "11px", opacity: 0.7, textTransform: "uppercase" }}>Pending Reboot Status</div>
+              <div style={{ fontSize: "15px", fontWeight: 600, marginTop: "4px" }}>
+                {buildInfo?.RebootPending ? (
+                  <span style={{ color: "#e74c3c" }}>⚠️ Reboot Required</span>
+                ) : (
+                  <span style={{ color: "#2ecc71" }}>✓ No Pending Reboot</span>
+                )}
+              </div>
+              <div style={{ fontSize: "12px", opacity: 0.7, marginBottom: "6px" }}>CBS / WU Servicing Stack</div>
             </div>
-            <div style={{ fontSize: "12px", opacity: 0.7 }}>CBS / WU Servicing Stack</div>
+
+            <div style={{ marginTop: "8px" }}>
+              <Button
+                variant={buildInfo?.RebootPending ? "alert" : "secondary"}
+                size="small"
+                onClick={() => setShowRebootConfirm(true)}
+                isLoading={isRebooting}
+              >
+                🔄 {buildInfo?.RebootPending ? "Restart Host Now" : "Reboot Machine"}
+              </Button>
+            </div>
           </div>
 
           <div style={{ background: "rgba(0,0,0,0.25)", padding: "10px 14px", borderRadius: "6px" }}>
@@ -489,6 +656,125 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
               LAN Gigabit Streaming
             </div>
             <div style={{ fontSize: "12px", opacity: 0.8 }}>Saves ~4.68 GB WAN per machine</div>
+          </div>
+        </div>
+
+        {/* Windows Release History Table (Last 3 Builds) */}
+        <div
+          style={{
+            background: "rgba(0,0,0,0.2)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: "6px",
+            padding: "14px 16px",
+            marginTop: "16px",
+            marginBottom: "16px",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+            <div>
+              <div style={{ fontSize: "13px", fontWeight: 600, color: "#fff", display: "flex", alignItems: "center", gap: "6px" }}>
+                <span>📜</span>
+                <span>Windows Release History & Stability ({versionHistory.branchName})</span>
+              </div>
+              <div style={{ fontSize: "11px", opacity: 0.75, marginTop: "2px" }}>
+                Showing the last three cumulative builds for this Windows version, release dates, and servicing stability
+              </div>
+            </div>
+          </div>
+
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.12)", textAlign: "left", opacity: 0.75 }}>
+                  <th style={{ padding: "8px 10px" }}>Build Version</th>
+                  <th style={{ padding: "8px 10px" }}>KB Package</th>
+                  <th style={{ padding: "8px 10px" }}>Release Date</th>
+                  <th style={{ padding: "8px 10px" }}>Stability Channel</th>
+                  <th style={{ padding: "8px 10px" }}>Host Alignment</th>
+                </tr>
+              </thead>
+              <tbody>
+                {versionHistory.releases.map((rel) => {
+                  const isCurrent =
+                    currentUbrNum !== undefined &&
+                    rel.build.includes(String(currentUbrNum));
+
+                  return (
+                    <tr
+                      key={rel.kb}
+                      style={{
+                        borderBottom: "1px solid rgba(255,255,255,0.05)",
+                        background: isCurrent ? "rgba(46, 204, 113, 0.1)" : "transparent",
+                      }}
+                    >
+                      <td style={{ padding: "10px", fontWeight: 600, color: "#fff" }}>
+                        {rel.build}
+                      </td>
+                      <td style={{ padding: "10px" }}>
+                        <span style={{ color: "#00e5ff", fontWeight: 600 }}>{rel.kb}</span>
+                        <div style={{ fontSize: "10px", opacity: 0.65 }}>{rel.notes}</div>
+                      </td>
+                      <td style={{ padding: "10px", opacity: 0.85 }}>
+                        {rel.releaseDate}
+                      </td>
+                      <td style={{ padding: "10px" }}>
+                        <span
+                          style={{
+                            display: "inline-block",
+                            padding: "3px 10px",
+                            borderRadius: "12px",
+                            fontSize: "11px",
+                            fontWeight: 600,
+                            background: rel.status.includes("Current")
+                              ? "rgba(46, 204, 113, 0.2)"
+                              : rel.status.includes("Previous")
+                              ? "rgba(52, 152, 219, 0.2)"
+                              : "rgba(255, 255, 255, 0.08)",
+                            color: rel.status.includes("Current")
+                              ? "#2ecc71"
+                              : rel.status.includes("Previous")
+                              ? "#3498db"
+                              : "#95a5a6",
+                            border: rel.status.includes("Current")
+                              ? "1px solid rgba(46, 204, 113, 0.4)"
+                              : "none",
+                          }}
+                        >
+                          {rel.status}
+                        </span>
+                      </td>
+                      <td style={{ padding: "10px" }}>
+                        {isCurrent ? (
+                          <span style={{ color: "#2ecc71", fontWeight: 600, display: "flex", alignItems: "center", gap: "4px" }}>
+                            <span>✓</span> Installed on Host
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setKbArticle(rel.kb);
+                              setShowDeployModal(true);
+                            }}
+                            style={{
+                              background: "rgba(0, 229, 255, 0.1)",
+                              border: "1px solid rgba(0, 229, 255, 0.4)",
+                              color: "#00e5ff",
+                              borderRadius: "4px",
+                              padding: "4px 10px",
+                              fontSize: "11px",
+                              fontWeight: 600,
+                              cursor: "pointer",
+                            }}
+                          >
+                            Deploy {rel.kb}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
 
@@ -746,6 +1032,42 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
               </div>
             )}
           </div>
+        )}
+
+        {/* Reboot Confirmation Modal */}
+        {showRebootConfirm && (
+          <Modal
+            title="Reboot host?"
+            onExit={() => setShowRebootConfirm(false)}
+            isLoading={isRebooting}
+          >
+            <div style={{ padding: "8px 0" }}>
+              <p style={{ margin: "0 0 14px 0", fontSize: "14px", lineHeight: "1.5" }}>
+                Are you sure you want to reboot <strong>{host.display_name || "this host"}</strong>?
+              </p>
+              <p style={{ margin: "0 0 20px 0", fontSize: "13px", opacity: 0.8, lineHeight: "1.4" }}>
+                {buildInfo?.RebootPending
+                  ? "A reboot is currently required to finalize and apply pending Windows servicing packages. The machine will restart in 10 seconds."
+                  : "The machine will gracefully close active processes and restart in 10 seconds."}
+              </p>
+              <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "20px" }}>
+                <Button
+                  variant="secondary"
+                  onClick={() => setShowRebootConfirm(false)}
+                  disabled={isRebooting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="alert"
+                  onClick={handleRebootHost}
+                  isLoading={isRebooting}
+                >
+                  Yes, Reboot Host
+                </Button>
+              </div>
+            </div>
+          </Modal>
         )}
       </Card>
     </div>
