@@ -236,8 +236,10 @@ const WindowsUpdatesCard: React.FC<IWindowsUpdatesCardProps> = ({ host, classNam
   const [showRebootConfirm, setShowRebootConfirm] = useState(false);
 
   // Deployment form state
+  const [deploySourceType, setDeploySourceType] = useState<"microsoft_cloud" | "lan_p2p" | "custom_url">("microsoft_cloud");
   const [kbArticle, setKbArticle] = useState("KB5124010");
   const [seederUrl, setSeederUrl] = useState("http://192.168.60.15:8888/update.msu");
+  const [customUrl, setCustomUrl] = useState("");
   const [useP2P, setUseP2P] = useState(true);
   const [autoReboot, setAutoReboot] = useState(true);
 
@@ -418,7 +420,7 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
             if (statusObj.status === "completed") {
               if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
               notify.success(`Deployment of ${kbArticle} completed!`);
-              if (useP2P) {
+              if (useP2P && deploySourceType === "lan_p2p") {
                 p2pAPI.recordTransfer({
                   source_host_id: 1,
                   target_host_id: host.id,
@@ -447,124 +449,366 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
     setPatchStatus({ status: "running", stage: "preflight", progress: 10, message: "Performing pre-flight checks..." });
     setRecentLog("");
 
-    const launchScript = [
-      `$ErrorActionPreference = "Stop"`,
-      `$kb = "${kbArticle}"`,
-      `$sourceUrl = "${seederUrl}"`,
-      `$autoReboot = ${autoReboot ? "$true" : "$false"}`,
-      `$statusFile = "$env:SystemRoot\\Temp\\mesh_patch_status.json"`,
-      `$logFile = "$env:SystemRoot\\Temp\\mesh_patch_install.log"`,
-      `$workerFile = "$env:SystemRoot\\Temp\\mesh_patch_worker.ps1"`,
-      ``,
-      `# Pre-flight Check: Disk Space`,
-      `$drive = Get-PSDrive C`,
-      `$freeGB = [math]::Round($drive.Free / 1GB, 2)`,
-      `if ($freeGB -lt 8) {`,
-      `    @{`,
-      `        status = "failed"`,
-      `        stage = "preflight_failed"`,
-      `        message = "Insufficient free disk space on C:\\ ($freeGB GB available). Cumulative updates require at least 8 GB free."`,
-      `        free_space_gb = $freeGB`,
-      `    } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
-      `    Get-Content $statusFile -Raw`,
-      `    Exit 0`,
-      `}`,
-      ``,
-      `# Pre-flight Check: LAN Network Probe`,
-      `try {`,
-      `    $uri = New-Object System.Uri($sourceUrl)`,
-      `    $tcp = Test-NetConnection -ComputerName $uri.Host -Port $uri.Port -WarningAction SilentlyContinue`,
-      `    if (-not $tcp.TcpTestSucceeded) {`,
-      `        @{`,
-      `            status = "failed"`,
-      `            stage = "network_probe_failed"`,
-      `            message = "Cannot reach update source at $($uri.Host):$($uri.Port). Ensure LAN seeder service is running and firewall port $($uri.Port) is open."`,
-      `            source_url = $sourceUrl`,
-      `        } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
-      `        Get-Content $statusFile -Raw`,
-      `        Exit 0`,
-      `    }`,
-      `} catch {}`,
-      ``,
-      `# Initial Status`,
-      `@{`,
-      `    status = "running"`,
-      `    stage = "downloading"`,
-      `    progress = 25`,
-      `    message = "Pre-flight checks passed ($freeGB GB free). Downloading $kb from $sourceUrl..."`,
-      `    kb = $kb`,
-      `    start_time = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")`,
-      `} | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
-      ``,
-      `# Worker script file`,
-      `$workerCode = @'`,
-      `param($kb, $sourceUrl, $autoReboot, $statusFile, $logFile)`,
-      `$destFile = "$env:SystemRoot\\Temp\\windows11.0-$kb-x64.msu"`,
-      `try {`,
-      `    "[$((Get-Date).ToString('HH:mm:ss'))] Starting download from $sourceUrl" | Out-File $logFile -Encoding utf8`,
-      `    $wc = New-Object System.Net.WebClient`,
-      `    $startTime = Get-Date`,
-      `    $wc.DownloadFile($sourceUrl, $destFile)`,
-      `    $downloadSec = [math]::Round(((Get-Date) - $startTime).TotalSeconds, 1)`,
-      `    $sizeMB = [math]::Round((Get-Item $destFile).Length / 1MB, 2)`,
-      `    "[$((Get-Date).ToString('HH:mm:ss'))] Download complete: $sizeMB MB in $downloadSec s" | Out-File $logFile -Append`,
-      ``,
-      `    @{`,
-      `        status = "running"`,
-      `        stage = "installing"`,
-      `        progress = 65`,
-      `        message = "Downloaded $sizeMB MB in $downloadSec s. Executing wusa.exe unattended..."`,
-      `        download_time_sec = $downloadSec`,
-      `        size_mb = $sizeMB`,
-      `    } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
-      ``,
-      `    "[$((Get-Date).ToString('HH:mm:ss'))] Invoking wusa.exe /quiet /norestart" | Out-File $logFile -Append`,
-      `    $proc = Start-Process -FilePath "wusa.exe" -ArgumentList ('"''' + $destFile + '''" /quiet /norestart') -Wait -PassThru`,
-      `    $exitCode = $proc.ExitCode`,
-      `    "[$((Get-Date).ToString('HH:mm:ss'))] wusa.exe exited with code: $exitCode" | Out-File $logFile -Append`,
-      ``,
-      `    Remove-Item -Path $destFile -Force -ErrorAction SilentlyContinue`,
-      `    "[$((Get-Date).ToString('HH:mm:ss'))] Temporary payload purged from disk." | Out-File $logFile -Append`,
-      ``,
-      `    if ($exitCode -in 0, 3010) {`,
-      `        $rebootNeeded = ($exitCode -eq 3010)`,
-      `        $msg = "Update $kb installed successfully! (ExitCode: $exitCode)"`,
-      `        if ($autoReboot -eq "True" -or $autoReboot -eq $true) {`,
-      `            $msg += " Scheduling restart in 30 seconds."`,
-      `            shutdown /r /t 30 /c "Mesh MDM: Finalizing update $kb"`,
-      `        }`,
-      `        @{`,
-      `            status = "completed"`,
-      `            stage = "finished"`,
-      `            progress = 100`,
-      `            message = $msg`,
-      `            exit_code = $exitCode`,
-      `            reboot_required = $rebootNeeded`,
-      `            completed_at = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")`,
-      `        } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
-      `    } else {`,
-      `        @{`,
-      `            status = "failed"`,
-      `            stage = "installation_failed"`,
-      `            progress = 100`,
-      `            message = "WUSA installation failed with exit code $exitCode."`,
-      `            exit_code = $exitCode`,
-      `        } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
-      `    }`,
-      `} catch {`,
-      `    "[$((Get-Date).ToString('HH:mm:ss'))] Fatal Error: $_" | Out-File $logFile -Append`,
-      `    @{`,
-      `        status = "failed"`,
-      `        stage = "worker_exception"`,
-      `        progress = 100`,
-      `        message = "Fatal error during update execution: $_"`,
-      `    } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
-      `}`,
-      `'@`,
-      `Set-Content -Path $workerFile -Value $workerCode -Force`,
-      `Start-Process -FilePath "powershell.exe" -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -File "' + $workerFile + '" -kb "' + $kb + '" -sourceUrl "' + $sourceUrl + '" -autoReboot ' + ($autoReboot ? '$true' : '$false') + ' -statusFile "' + $statusFile + '" -logFile "' + $logFile + '"') -WindowStyle Hidden`,
-      `Get-Content $statusFile -Raw`,
-    ].join('\r\n');
+    let launchScript = "";
+
+    if (deploySourceType === "microsoft_cloud") {
+      launchScript = [
+        `$ErrorActionPreference = "Stop"`,
+        `$kb = "${kbArticle.trim()}"`,
+        `$autoReboot = ${autoReboot ? "$true" : "$false"}`,
+        `$statusFile = "$env:SystemRoot\\Temp\\mesh_patch_status.json"`,
+        `$logFile = "$env:SystemRoot\\Temp\\mesh_patch_install.log"`,
+        `$workerFile = "$env:SystemRoot\\Temp\\mesh_patch_worker.ps1"`,
+        ``,
+        `# Pre-flight Check: Disk Space`,
+        `$drive = Get-PSDrive C`,
+        `$freeGB = [math]::Round($drive.Free / 1GB, 2)`,
+        `if ($freeGB -lt 8) {`,
+        `    @{`,
+        `        status = "failed"`,
+        `        stage = "preflight_failed"`,
+        `        message = "Insufficient free disk space on C:\\ ($freeGB GB available). Windows cumulative updates require at least 8 GB free."`,
+        `        free_space_gb = $freeGB`,
+        `    } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+        `    Get-Content $statusFile -Raw`,
+        `    Exit 0`,
+        `}`,
+        ``,
+        `# Pre-flight Check: Outbound Internet to Microsoft`,
+        `try {`,
+        `    $tcp = Test-NetConnection -ComputerName "www.microsoft.com" -Port 443 -WarningAction SilentlyContinue`,
+        `    if (-not $tcp.TcpTestSucceeded) {`,
+        `        @{`,
+        `            status = "failed"`,
+        `            stage = "network_probe_failed"`,
+        `            message = "Target host cannot connect to Microsoft Cloud (HTTPS port 443 unreachable). Ensure internet access is enabled on this remote machine."`,
+        `        } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+        `        Get-Content $statusFile -Raw`,
+        `        Exit 0`,
+        `    }`,
+        `} catch {}`,
+        ``,
+        `# Initial Status`,
+        `@{`,
+        `    status = "running"`,
+        `    stage = "searching"`,
+        `    progress = 15`,
+        `    message = "Pre-flight checks passed ($freeGB GB free). Initializing direct Microsoft Cloud session for $kb..."`,
+        `    kb = $kb`,
+        `    start_time = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")`,
+        `} | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+        ``,
+        `# Worker script file`,
+        `$workerCode = @'`,
+        `param($kb, $autoReboot, $statusFile, $logFile)`,
+        `try {`,
+        `    "[$((Get-Date).ToString('HH:mm:ss'))] Starting Direct Microsoft Cloud worker for $kb" | Out-File $logFile -Encoding utf8`,
+        ``,
+        `    # 1. Backup domain WSUS policies`,
+        `    $auPath = "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU"`,
+        `    $wuPath = "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate"`,
+        `    $origUseWUServer = (Get-ItemProperty -Path $auPath -Name "UseWUServer" -ErrorAction SilentlyContinue).UseWUServer`,
+        `    $origDoNotConnect = (Get-ItemProperty -Path $wuPath -Name "DoNotConnectToWindowsUpdateInternetLocations" -ErrorAction SilentlyContinue).DoNotConnectToWindowsUpdateInternetLocations`,
+        ``,
+        `    "[$((Get-Date).ToString('HH:mm:ss'))] WSUS Policy: UseWUServer=$origUseWUServer, DoNotConnect=$origDoNotConnect" | Out-File $logFile -Append`,
+        ``,
+        `    # 2. Temporarily bypass WSUS redirectors`,
+        `    if (Test-Path $auPath) {`,
+        `        Set-ItemProperty -Path $auPath -Name "UseWUServer" -Value 0 -Force -ErrorAction SilentlyContinue`,
+        `    }`,
+        `    if (Test-Path $wuPath) {`,
+        `        Set-ItemProperty -Path $wuPath -Name "DoNotConnectToWindowsUpdateInternetLocations" -Value 0 -Force -ErrorAction SilentlyContinue`,
+        `    }`,
+        `    Restart-Service -Name wuauserv -Force -ErrorAction SilentlyContinue`,
+        ``,
+        `    # 3. Create Windows Update Agent Session`,
+        `    $Session = New-Object -ComObject Microsoft.Update.Session`,
+        `    $Searcher = $Session.CreateUpdateSearcher()`,
+        `    $Searcher.ServerSelection = 2 # 2 = ssWindowsUpdate (Public Microsoft Update Cloud)`,
+        `    $Searcher.ServiceID = "7971f918-a847-4430-9279-4a52d1efe18d"`,
+        ``,
+        `    @{`,
+        `        status = "running"`,
+        `        stage = "searching"`,
+        `        progress = 25`,
+        `        message = "Connected to Microsoft Update Cloud. Searching for updates matching $kb..."`,
+        `    } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+        ``,
+        `    "[$((Get-Date).ToString('HH:mm:ss'))] Searching Microsoft Update catalog..." | Out-File $logFile -Append`,
+        `    $SearchResult = $Searcher.Search("IsInstalled=0 and Type='Software'")`,
+        `    "[$((Get-Date).ToString('HH:mm:ss'))] Found $($SearchResult.Updates.Count) pending software updates." | Out-File $logFile -Append`,
+        ``,
+        `    # Match target KB`,
+        `    $cleanKb = $kb.Replace("KB", "").Trim()`,
+        `    $targetUpdate = $null`,
+        `    foreach ($u in $SearchResult.Updates) {`,
+        `        if ($u.Title -like "*$kb*" -or ($u.KBArticleIDs -contains $cleanKb)) {`,
+        `            $targetUpdate = $u`,
+        `            break`,
+        `        }`,
+        `    }`,
+        ``,
+        `    if (-not $targetUpdate -and ($kb -eq "" -or $kb -like "*Cumulative*" -or $kb -eq "Latest")) {`,
+        `        foreach ($u in $SearchResult.Updates) {`,
+        `            if ($u.Title -like "*Cumulative Update*") {`,
+        `                $targetUpdate = $u`,
+        `                break`,
+        `            }`,
+        `        }`,
+        `    }`,
+        ``,
+        `    if (-not $targetUpdate) {`,
+        `        # Check if already installed`,
+        `        $installedCheck = Get-HotFix | Where-Object { $_.HotFixID -like "*$cleanKb*" }`,
+        `        if ($installedCheck) {`,
+        `            $msg = "Update $kb is ALREADY installed on this machine (Installed on $($installedCheck.InstalledOn))."`,
+        `            "[$((Get-Date).ToString('HH:mm:ss'))] $msg" | Out-File $logFile -Append`,
+        `            @{`,
+        `                status = "completed"`,
+        `                stage = "finished"`,
+        `                progress = 100`,
+        `                message = $msg`,
+        `                reboot_required = $false`,
+        `                completed_at = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")`,
+        `            } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+        `            return`,
+        `        }`,
+        ``,
+        `        # If not found in catalog, log available updates`,
+        `        $availList = ($SearchResult.Updates | ForEach-Object { $_.Title }) -join "; "`,
+        `        $msg = "Update $kb was not found in Microsoft Cloud pending catalog for this OS build. Available updates: $availList"`,
+        `        "[$((Get-Date).ToString('HH:mm:ss'))] $msg" | Out-File $logFile -Append`,
+        `        @{`,
+        `            status = "failed"`,
+        `            stage = "not_found"`,
+        `            progress = 100`,
+        `            message = $msg`,
+        `        } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+        `        return`,
+        `    }`,
+        ``,
+        `    "[$((Get-Date).ToString('HH:mm:ss'))] Target update selected: $($targetUpdate.Title)" | Out-File $logFile -Append`,
+        ``,
+        `    # 4. Download directly on host from Microsoft CDN`,
+        `    @{`,
+        `        status = "running"`,
+        `        stage = "downloading"`,
+        `        progress = 45`,
+        `        message = "Downloading '$($targetUpdate.Title)' directly from Microsoft CDN..."`,
+        `    } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+        ``,
+        `    $UpdatesToDownload = New-Object -ComObject Microsoft.Update.UpdateColl`,
+        `    $UpdatesToDownload.Add($targetUpdate) | Out-Null`,
+        `    $Downloader = $Session.CreateUpdateDownloader()`,
+        `    $Downloader.Updates = $UpdatesToDownload`,
+        `    $Downloader.Priority = 3`,
+        `    $startTime = Get-Date`,
+        `    $DownResult = $Downloader.Download()`,
+        `    $downloadSec = [math]::Round(((Get-Date) - $startTime).TotalSeconds, 1)`,
+        ``,
+        `    "[$((Get-Date).ToString('HH:mm:ss'))] Download completed in $downloadSec s. ResultCode: $($DownResult.ResultCode)" | Out-File $logFile -Append`,
+        ``,
+        `    if ($DownResult.ResultCode -ne 2) {`,
+        `        throw "Microsoft Cloud download failed with ResultCode $($DownResult.ResultCode)"`,
+        `    }`,
+        ``,
+        `    # 5. Install unattended`,
+        `    @{`,
+        `        status = "running"`,
+        `        stage = "installing"`,
+        `        progress = 75`,
+        `        message = "Download complete ($downloadSec s). Installing '$($targetUpdate.Title)' via Windows Servicing Stack..."`,
+        `    } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+        ``,
+        `    $UpdatesToInstall = New-Object -ComObject Microsoft.Update.UpdateColl`,
+        `    $UpdatesToInstall.Add($targetUpdate) | Out-Null`,
+        `    $Installer = $Session.CreateUpdateInstaller()`,
+        `    $Installer.Updates = $UpdatesToInstall`,
+        `    $Installer.ForceQuiet = $true`,
+        `    $InstResult = $Installer.Install()`,
+        ``,
+        `    $resCode = $InstResult.ResultCode`,
+        `    $rebootNeeded = $InstResult.RebootRequired`,
+        `    $hresult = $InstResult.HResult`,
+        ``,
+        `    "[$((Get-Date).ToString('HH:mm:ss'))] Installation finished. ResultCode: $resCode, RebootRequired: $rebootNeeded, HResult: $hresult" | Out-File $logFile -Append`,
+        ``,
+        `    if ($resCode -in 2, 3) {`,
+        `        $msg = "Update $($targetUpdate.Title) installed successfully!"`,
+        `        if ($autoReboot -eq "True" -or $autoReboot -eq $true) {`,
+        `            $msg += " Scheduling restart in 30 seconds."`,
+        `            shutdown /r /t 30 /c "Mesh MDM: Finalizing update $kb"`,
+        `        }`,
+        `        @{`,
+        `            status = "completed"`,
+        `            stage = "finished"`,
+        `            progress = 100`,
+        `            message = $msg`,
+        `            exit_code = 0`,
+        `            reboot_required = $rebootNeeded`,
+        `            completed_at = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")`,
+        `        } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+        `    } else {`,
+        `        @{`,
+        `            status = "failed"`,
+        `            stage = "installation_failed"`,
+        `            progress = 100`,
+        `            message = "Installation returned ResultCode $resCode (HResult: 0x$($hresult.ToString('X8')))"`,
+        `            exit_code = $hresult`,
+        `        } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+        `    }`,
+        `} catch {`,
+        `    "[$((Get-Date).ToString('HH:mm:ss'))] Fatal Error: $_" | Out-File $logFile -Append`,
+        `    @{`,
+        `        status = "failed"`,
+        `        stage = "worker_exception"`,
+        `        progress = 100`,
+        `        message = "Fatal error during Microsoft Cloud update: $_"`,
+        `    } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+        `} finally {`,
+        `    # 6. Restore original domain WSUS policies`,
+        `    if ($null -ne $origUseWUServer) {`,
+        `        Set-ItemProperty -Path $auPath -Name "UseWUServer" -Value $origUseWUServer -Force -ErrorAction SilentlyContinue`,
+        `    }`,
+        `    if ($null -ne $origDoNotConnect) {`,
+        `        Set-ItemProperty -Path $wuPath -Name "DoNotConnectToWindowsUpdateInternetLocations" -Value $origDoNotConnect -Force -ErrorAction SilentlyContinue`,
+        `    }`,
+        `    Restart-Service -Name wuauserv -Force -ErrorAction SilentlyContinue`,
+        `    "[$((Get-Date).ToString('HH:mm:ss'))] Restored original domain WSUS policies." | Out-File $logFile -Append`,
+        `}`,
+        `'@`,
+        `Set-Content -Path $workerFile -Value $workerCode -Force`,
+        `Start-Process -FilePath "powershell.exe" -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -File "' + $workerFile + '" -kb "' + $kb + '" -autoReboot ' + ($autoReboot ? '$true' : '$false') + ' -statusFile "' + $statusFile + '" -logFile "' + $logFile + '"') -WindowStyle Hidden`,
+        `Get-Content $statusFile -Raw`,
+      ].join('\r\n');
+    } else {
+      // LAN P2P or Custom URL mode
+      const targetSourceUrl = deploySourceType === "custom_url" ? customUrl.trim() : seederUrl.trim();
+      const isLan = deploySourceType === "lan_p2p";
+
+      launchScript = [
+        `$ErrorActionPreference = "Stop"`,
+        `$kb = "${kbArticle.trim()}"`,
+        `$sourceUrl = "${targetSourceUrl}"`,
+        `$autoReboot = ${autoReboot ? "$true" : "$false"}`,
+        `$statusFile = "$env:SystemRoot\\Temp\\mesh_patch_status.json"`,
+        `$logFile = "$env:SystemRoot\\Temp\\mesh_patch_install.log"`,
+        `$workerFile = "$env:SystemRoot\\Temp\\mesh_patch_worker.ps1"`,
+        ``,
+        `# Pre-flight Check: Disk Space`,
+        `$drive = Get-PSDrive C`,
+        `$freeGB = [math]::Round($drive.Free / 1GB, 2)`,
+        `if ($freeGB -lt 8) {`,
+        `    @{`,
+        `        status = "failed"`,
+        `        stage = "preflight_failed"`,
+        `        message = "Insufficient free disk space on C:\\ ($freeGB GB available). Cumulative updates require at least 8 GB free."`,
+        `        free_space_gb = $freeGB`,
+        `    } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+        `    Get-Content $statusFile -Raw`,
+        `    Exit 0`,
+        `}`,
+        ``,
+        isLan
+          ? [
+              `# Pre-flight Check: LAN Network Probe`,
+              `try {`,
+              `    $uri = New-Object System.Uri($sourceUrl)`,
+              `    $tcp = Test-NetConnection -ComputerName $uri.Host -Port $uri.Port -WarningAction SilentlyContinue`,
+              `    if (-not $tcp.TcpTestSucceeded) {`,
+              `        @{`,
+              `            status = "failed"`,
+              `            stage = "network_probe_failed"`,
+              `            message = "Cannot reach update source at $($uri.Host):$($uri.Port). Ensure LAN seeder service is running and firewall port $($uri.Port) is open."`,
+              `            source_url = $sourceUrl`,
+              `        } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+              `        Get-Content $statusFile -Raw`,
+              `        Exit 0`,
+              `    }`,
+              `} catch {}`,
+            ].join('\r\n')
+          : ``,
+        ``,
+        `# Initial Status`,
+        `@{`,
+        `    status = "running"`,
+        `    stage = "downloading"`,
+        `    progress = 25`,
+        `    message = "Pre-flight checks passed ($freeGB GB free). Downloading $kb from $sourceUrl..."`,
+        `    kb = $kb`,
+        `    start_time = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")`,
+        `} | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+        ``,
+        `# Worker script file`,
+        `$workerCode = @'`,
+        `param($kb, $sourceUrl, $autoReboot, $statusFile, $logFile)`,
+        `$destFile = "$env:SystemRoot\\Temp\\windows11.0-$kb-x64.msu"`,
+        `try {`,
+        `    "[$((Get-Date).ToString('HH:mm:ss'))] Starting download from $sourceUrl" | Out-File $logFile -Encoding utf8`,
+        `    $wc = New-Object System.Net.WebClient`,
+        `    $startTime = Get-Date`,
+        `    $wc.DownloadFile($sourceUrl, $destFile)`,
+        `    $downloadSec = [math]::Round(((Get-Date) - $startTime).TotalSeconds, 1)`,
+        `    $sizeMB = [math]::Round((Get-Item $destFile).Length / 1MB, 2)`,
+        `    "[$((Get-Date).ToString('HH:mm:ss'))] Download complete: $sizeMB MB in $downloadSec s" | Out-File $logFile -Append`,
+        ``,
+        `    @{`,
+        `        status = "running"`,
+        `        stage = "installing"`,
+        `        progress = 65`,
+        `        message = "Downloaded $sizeMB MB in $downloadSec s. Executing wusa.exe unattended..."`,
+        `        download_time_sec = $downloadSec`,
+        `        size_mb = $sizeMB`,
+        `    } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+        ``,
+        `    "[$((Get-Date).ToString('HH:mm:ss'))] Invoking wusa.exe /quiet /norestart" | Out-File $logFile -Append`,
+        `    $proc = Start-Process -FilePath "wusa.exe" -ArgumentList ('"''' + $destFile + '''" /quiet /norestart') -Wait -PassThru`,
+        `    $exitCode = $proc.ExitCode`,
+        `    "[$((Get-Date).ToString('HH:mm:ss'))] wusa.exe exited with code: $exitCode" | Out-File $logFile -Append`,
+        ``,
+        `    Remove-Item -Path $destFile -Force -ErrorAction SilentlyContinue`,
+        `    "[$((Get-Date).ToString('HH:mm:ss'))] Temporary payload purged from disk." | Out-File $logFile -Append`,
+        ``,
+        `    if ($exitCode -in 0, 3010) {`,
+        `        $rebootNeeded = ($exitCode -eq 3010)`,
+        `        $msg = "Update $kb installed successfully! (ExitCode: $exitCode)"`,
+        `        if ($autoReboot -eq "True" -or $autoReboot -eq $true) {`,
+        `            $msg += " Scheduling restart in 30 seconds."`,
+        `            shutdown /r /t 30 /c "Mesh MDM: Finalizing update $kb"`,
+        `        }`,
+        `        @{`,
+        `            status = "completed"`,
+        `            stage = "finished"`,
+        `            progress = 100`,
+        `            message = $msg`,
+        `            exit_code = $exitCode`,
+        `            reboot_required = $rebootNeeded`,
+        `            completed_at = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")`,
+        `        } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+        `    } else {`,
+        `        @{`,
+        `            status = "failed"`,
+        `            stage = "installation_failed"`,
+        `            progress = 100`,
+        `            message = "WUSA installation failed with exit code $exitCode."`,
+        `            exit_code = $exitCode`,
+        `        } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+        `    }`,
+        `} catch {`,
+        `    "[$((Get-Date).ToString('HH:mm:ss'))] Fatal Error: $_" | Out-File $logFile -Append`,
+        `    @{`,
+        `        status = "failed"`,
+        `        stage = "worker_exception"`,
+        `        progress = 100`,
+        `        message = "Fatal error during update execution: $_"`,
+        `    } | ConvertTo-Json -Compress | Set-Content $statusFile -Force`,
+        `}`,
+        `'@`,
+        `Set-Content -Path $workerFile -Value $workerCode -Force`,
+        `Start-Process -FilePath "powershell.exe" -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -File "' + $workerFile + '" -kb "' + $kb + '" -sourceUrl "' + $sourceUrl + '" -autoReboot ' + ($autoReboot ? '$true' : '$false') + ' -statusFile "' + $statusFile + '" -logFile "' + $logFile + '"') -WindowStyle Hidden`,
+        `Get-Content $statusFile -Raw`,
+      ].filter(Boolean).join('\r\n');
+    }
 
     try {
       const resp = await scriptsAPI.runScriptSync({
@@ -1051,54 +1295,198 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
 
             {activeTab === "deploy" ? (
               <div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: "12px", marginBottom: "12px" }}>
-                  <div>
-                    <label style={{ display: "block", fontSize: "12px", marginBottom: "4px", opacity: 0.8 }}>
-                      KB Article ID:
-                    </label>
-                    <input
-                      type="text"
-                      value={kbArticle}
-                      onChange={(e) => setKbArticle(e.target.value)}
+                {/* Deployment Source Mode Selector */}
+                <div style={{ marginBottom: "16px" }}>
+                  <label style={{ display: "block", fontSize: "12px", marginBottom: "8px", fontWeight: 600, color: "#fff" }}>
+                    Select Deployment Source & Network Topology:
+                  </label>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
+                    {/* Mode 1: Microsoft Cloud */}
+                    <div
+                      onClick={() => setDeploySourceType("microsoft_cloud")}
                       style={{
-                        width: "100%",
-                        padding: "8px 10px",
-                        background: "#0f141f",
-                        border: "1px solid #2c3a58",
-                        color: "#fff",
-                        borderRadius: "4px",
+                        padding: "12px",
+                        borderRadius: "6px",
+                        cursor: "pointer",
+                        background: deploySourceType === "microsoft_cloud" ? "rgba(0, 229, 255, 0.15)" : "rgba(0, 0, 0, 0.3)",
+                        border: deploySourceType === "microsoft_cloud" ? "1px solid #00e5ff" : "1px solid rgba(255,255,255,0.1)",
+                        transition: "all 0.2s ease",
                       }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ display: "block", fontSize: "12px", marginBottom: "4px", opacity: 0.8 }}>
-                      Package Source URL (LAN Seeder or WAN):
-                    </label>
-                    <input
-                      type="text"
-                      value={seederUrl}
-                      onChange={(e) => setSeederUrl(e.target.value)}
+                    >
+                      <div style={{ fontWeight: 600, fontSize: "13px", color: deploySourceType === "microsoft_cloud" ? "#00e5ff" : "#fff", display: "flex", alignItems: "center", gap: "6px" }}>
+                        <span>🌐</span> Remote Host (Microsoft Cloud)
+                      </div>
+                      <div style={{ fontSize: "11px", opacity: 0.75, marginTop: "4px", lineHeight: "1.4" }}>
+                        Direct download from Microsoft CDN over internet. Bypasses domain WSUS locks. Best for off-site machines.
+                      </div>
+                    </div>
+
+                    {/* Mode 2: Local LAN P2P */}
+                    <div
+                      onClick={() => setDeploySourceType("lan_p2p")}
                       style={{
-                        width: "100%",
-                        padding: "8px 10px",
-                        background: "#0f141f",
-                        border: "1px solid #2c3a58",
-                        color: "#fff",
-                        borderRadius: "4px",
+                        padding: "12px",
+                        borderRadius: "6px",
+                        cursor: "pointer",
+                        background: deploySourceType === "lan_p2p" ? "rgba(0, 229, 255, 0.15)" : "rgba(0, 0, 0, 0.3)",
+                        border: deploySourceType === "lan_p2p" ? "1px solid #00e5ff" : "1px solid rgba(255,255,255,0.1)",
+                        transition: "all 0.2s ease",
                       }}
-                    />
+                    >
+                      <div style={{ fontWeight: 600, fontSize: "13px", color: deploySourceType === "lan_p2p" ? "#00e5ff" : "#fff", display: "flex", alignItems: "center", gap: "6px" }}>
+                        <span>⚡</span> Local LAN P2P (Office Seeder)
+                      </div>
+                      <div style={{ fontSize: "11px", opacity: 0.75, marginTop: "4px", lineHeight: "1.4" }}>
+                        Fast 1 Gbps LAN streaming from local peer. Saves 4.68 GB WAN bandwidth. For in-office machines.
+                      </div>
+                    </div>
+
+                    {/* Mode 3: Custom URL */}
+                    <div
+                      onClick={() => setDeploySourceType("custom_url")}
+                      style={{
+                        padding: "12px",
+                        borderRadius: "6px",
+                        cursor: "pointer",
+                        background: deploySourceType === "custom_url" ? "rgba(0, 229, 255, 0.15)" : "rgba(0, 0, 0, 0.3)",
+                        border: deploySourceType === "custom_url" ? "1px solid #00e5ff" : "1px solid rgba(255,255,255,0.1)",
+                        transition: "all 0.2s ease",
+                      }}
+                    >
+                      <div style={{ fontWeight: 600, fontSize: "13px", color: deploySourceType === "custom_url" ? "#00e5ff" : "#fff", display: "flex", alignItems: "center", gap: "6px" }}>
+                        <span>🔗</span> Custom Package URL
+                      </div>
+                      <div style={{ fontSize: "11px", opacity: 0.75, marginTop: "4px", lineHeight: "1.4" }}>
+                        Download standalone .msu directly from any custom HTTP/HTTPS, Azure Blob, or S3 endpoint.
+                      </div>
+                    </div>
                   </div>
                 </div>
 
+                {/* Mode Specific Inputs & Notes */}
+                {deploySourceType === "microsoft_cloud" && (
+                  <div style={{ marginBottom: "14px" }}>
+                    <div style={{ marginBottom: "10px" }}>
+                      <label style={{ display: "block", fontSize: "12px", marginBottom: "4px", opacity: 0.8 }}>
+                        Target KB Article ID (or leave for Latest Cumulative Update):
+                      </label>
+                      <input
+                        type="text"
+                        value={kbArticle}
+                        onChange={(e) => setKbArticle(e.target.value)}
+                        placeholder="e.g. KB5124010"
+                        style={{
+                          width: "100%",
+                          maxWidth: "320px",
+                          padding: "8px 10px",
+                          background: "#0f141f",
+                          border: "1px solid #2c3a58",
+                          color: "#fff",
+                          borderRadius: "4px",
+                        }}
+                      />
+                    </div>
+                    <div style={{ background: "rgba(0, 229, 255, 0.08)", border: "1px solid rgba(0, 229, 255, 0.2)", borderRadius: "6px", padding: "10px 14px", fontSize: "12px", color: "#a4d8ff", lineHeight: "1.5" }}>
+                      <strong>ℹ️ Remote Host Direct Servicing:</strong> The target machine will connect directly to Microsoft Update Cloud over the internet, temporarily bypass domain WSUS restrictions (<code>UseWUServer = 0</code>), download packages directly onto the remote disk, and install unattended via the Windows Servicing Stack. No file push or local network seeder is needed.
+                    </div>
+                  </div>
+                )}
+
+                {deploySourceType === "lan_p2p" && (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: "12px", marginBottom: "14px" }}>
+                    <div>
+                      <label style={{ display: "block", fontSize: "12px", marginBottom: "4px", opacity: 0.8 }}>
+                        KB Article ID:
+                      </label>
+                      <input
+                        type="text"
+                        value={kbArticle}
+                        onChange={(e) => setKbArticle(e.target.value)}
+                        style={{
+                          width: "100%",
+                          padding: "8px 10px",
+                          background: "#0f141f",
+                          border: "1px solid #2c3a58",
+                          color: "#fff",
+                          borderRadius: "4px",
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: "block", fontSize: "12px", marginBottom: "4px", opacity: 0.8 }}>
+                        Local LAN Seeder Endpoint:
+                      </label>
+                      <input
+                        type="text"
+                        value={seederUrl}
+                        onChange={(e) => setSeederUrl(e.target.value)}
+                        placeholder="http://192.168.60.15:8888/update.msu"
+                        style={{
+                          width: "100%",
+                          padding: "8px 10px",
+                          background: "#0f141f",
+                          border: "1px solid #2c3a58",
+                          color: "#fff",
+                          borderRadius: "4px",
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {deploySourceType === "custom_url" && (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: "12px", marginBottom: "14px" }}>
+                    <div>
+                      <label style={{ display: "block", fontSize: "12px", marginBottom: "4px", opacity: 0.8 }}>
+                        KB Article ID:
+                      </label>
+                      <input
+                        type="text"
+                        value={kbArticle}
+                        onChange={(e) => setKbArticle(e.target.value)}
+                        style={{
+                          width: "100%",
+                          padding: "8px 10px",
+                          background: "#0f141f",
+                          border: "1px solid #2c3a58",
+                          color: "#fff",
+                          borderRadius: "4px",
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: "block", fontSize: "12px", marginBottom: "4px", opacity: 0.8 }}>
+                        Direct HTTP/HTTPS Download URL (.msu):
+                      </label>
+                      <input
+                        type="text"
+                        value={customUrl}
+                        onChange={(e) => setCustomUrl(e.target.value)}
+                        placeholder="https://storage.example.com/windows11.0-kb5124010-x64.msu"
+                        style={{
+                          width: "100%",
+                          padding: "8px 10px",
+                          background: "#0f141f",
+                          border: "1px solid #2c3a58",
+                          color: "#fff",
+                          borderRadius: "4px",
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
                 <div style={{ display: "flex", gap: "20px", alignItems: "center", marginBottom: "16px" }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={useP2P}
-                      onChange={(e) => setUseP2P(e.target.checked)}
-                    />
-                    <span>Record Mesh P2P Bandwidth Telemetry (saves 4.68 GB WAN)</span>
-                  </label>
+                  {deploySourceType === "lan_p2p" && (
+                    <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", cursor: "pointer" }}>
+                      <input
+                        type="checkbox"
+                        checked={useP2P}
+                        onChange={(e) => setUseP2P(e.target.checked)}
+                      />
+                      <span>Record Mesh P2P Bandwidth Telemetry (saves 4.68 GB WAN)</span>
+                    </label>
+                  )}
                   <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", cursor: "pointer" }}>
                     <input
                       type="checkbox"
@@ -1156,7 +1544,11 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
                   >
                     {isLaunching || patchStatus.status === "running"
                       ? "⚡ Staging Update on Host..."
-                      : "🚀 Execute Silent Unattended Install"}
+                      : deploySourceType === "microsoft_cloud"
+                      ? "🌐 Initiate Direct Cloud Install on Remote Host"
+                      : deploySourceType === "lan_p2p"
+                      ? "🚀 Execute LAN P2P Stream Install"
+                      : "🚀 Execute Remote Download & Install"}
                   </Button>
                   <Button
                     variant="secondary"
@@ -1227,6 +1619,11 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
                   <div style={{ background: "rgba(0,0,0,0.3)", padding: "10px 14px", borderRadius: "6px" }}>
                     <strong style={{ color: "#2ecc71" }}>5. Exit Code 3010 is a SUCCESS:</strong>
                     <div>Windows Update returns exit code <code>3010</code> (<code>ERROR_SUCCESS_REBOOT_REQUIRED</code>) when installation succeeds. This is not an error! A simple reboot activates the new build.</div>
+                  </div>
+
+                  <div style={{ background: "rgba(0,0,0,0.3)", padding: "10px 14px", borderRadius: "6px" }}>
+                    <strong style={{ color: "#00e5ff" }}>6. Hosts on Remote / External Networks:</strong>
+                    <div>If a host is away on a remote network or home office, use <strong>Remote Host (Microsoft Cloud)</strong> mode. The remote machine downloads directly from Microsoft's global CDN over the internet and bypasses domain WSUS redirectors, eliminating the need to push large multi-gigabyte files across WAN or VPN links.</div>
                   </div>
                 </div>
               </div>
