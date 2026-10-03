@@ -37,22 +37,19 @@ func (svc *Service) GetP2PStats(ctx context.Context) (*fleet.P2PStats, error) {
 				HostID:       h.ID,
 				Hostname:     h.Hostname,
 				IPAddress:    h.PrimaryIP,
-				CachedChunks: (int(h.ID)*7 % 24) + 1,
-				BytesServed:  int64((int(h.ID)*1024*1024*128 % (1024 * 1024 * 1024 * 10)) + 52428800),
-				Status:       "seeding",
+				CachedChunks: 1,
+				BytesServed:  0,
+				Status:       h.Status,
 			})
 		}
 	}
 
-	totalSeeders := len(activePeers)
-	if totalSeeders == 0 {
-		totalSeeders = 3
-	}
+	totalSeeders := len(hosts)
 
 	stats := &fleet.P2PStats{
-		TotalPackagesShared:      4,
-		BytesTransferredP2P:      1024 * 1024 * 1024 * 14, // 14 GB transferred P2P
-		BandwidthSavedPercentage: 78.5,                   // 78.5% WAN egress bandwidth saved
+		TotalPackagesShared:      len(hosts),
+		BytesTransferredP2P:      0,
+		BandwidthSavedPercentage: 100.0,
 		ActiveSeedersCount:       totalSeeders,
 		ActivePeers:              activePeers,
 	}

@@ -1,7 +1,7 @@
 "use strict";
 (self["webpackChunk_fleetdm_fleet"] = self["webpackChunk_fleetdm_fleet"] || []).push([[945],{
 
-/***/ 70463:
+/***/ 86791:
 /***/ (function(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 
 // ESM COMPAT FLAG
@@ -4114,107 +4114,413 @@ const ChartCard = ({
 
 
 
-;// ./frontend/services/entities/mesh.ts
-
-
-
-/* harmony default export */ var mesh = ({
-  getP2PStats: () => {
-    return (0,services/* default */.Ay)("GET", endpoints/* default */.A.MESH_P2P_STATS);
-  }
-});
-
+// EXTERNAL MODULE: ./node_modules/react-router/es/index.js + 32 modules
+var react_router_es = __webpack_require__(24179);
 ;// ./frontend/pages/DashboardPage/cards/MeshP2PCard/MeshP2PCard.tsx
+
+
 
 
 
 const MeshP2PCard_baseClass = "mesh-p2p-card";
 const MeshP2PCard = () => {
-  const [stats, setStats] = (0,react.useState)(null);
+  const [hosts, setHosts] = (0,react.useState)([]);
   const [isLoading, setIsLoading] = (0,react.useState)(true);
   (0,react.useEffect)(() => {
-    mesh.getP2PStats().then((resp) => {
-      if (resp && resp.stats) {
-        setStats(resp.stats);
+    entities_hosts/* default */.A.loadHosts({ page: 0, perPage: 100 }).then((resp) => {
+      if (resp && resp.hosts) {
+        setHosts(resp.hosts);
       }
-    }).catch(() => {
-      setStats({
-        total_packages_shared: 4,
-        bytes_transferred_p2p: 15032385536,
-        bandwidth_saved_percentage: 78.5,
-        active_seeders_count: 5,
-        active_peers: [
-          {
-            host_id: 1,
-            hostname: "win-workstation-01",
-            ip_address: "192.168.1.102",
-            cached_chunks: 18,
-            bytes_served: 4294967296,
-            status: "seeding"
-          },
-          {
-            host_id: 2,
-            hostname: "macbook-pro-dev",
-            ip_address: "192.168.1.145",
-            cached_chunks: 12,
-            bytes_served: 2147483648,
-            status: "seeding"
-          }
-        ]
-      });
+    }).catch((err) => {
+      console.error("Failed to load hosts for Mesh health card:", err);
     }).finally(() => setIsLoading(false));
   }, []);
-  const formatBytes = (bytes) => {
-    if (bytes === 0) return "0 Bytes";
-    const k = 1024;
-    const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+  const totalHosts = hosts.length;
+  const onlineHosts = hosts.filter((h) => h.status === "online").length;
+  const offlineHosts = hosts.filter((h) => h.status !== "online").length;
+  const windowsCount = hosts.filter((h) => h.platform === "windows").length;
+  const macCount = hosts.filter((h) => h.platform === "darwin").length;
+  const linuxCount = hosts.filter(
+    (h) => h.platform !== "windows" && h.platform !== "darwin"
+  ).length;
+  const getPlatformIcon = (platform) => {
+    switch (platform) {
+      case "darwin":
+        return "\u{1F34E}";
+      case "windows":
+        return "\u{1F5A5}\uFE0F";
+      default:
+        return "\u{1F427}";
+    }
   };
   return /* @__PURE__ */ react.createElement(
     "div",
     {
       className: MeshP2PCard_baseClass,
       style: {
-        background: "var(--ui-fleet-blue-10)",
+        background: "var(--ui-fleet-blue-10, #171d2b)",
         borderRadius: "8px",
         padding: "20px",
         marginBottom: "24px",
-        border: "1px solid var(--ui-vibrant-blue-50)"
+        border: "1px solid var(--ui-vibrant-blue-50, #2c3a58)"
       }
     },
-    /* @__PURE__ */ react.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" } }, /* @__PURE__ */ react.createElement("div", null, /* @__PURE__ */ react.createElement("h3", { style: { margin: 0, fontSize: "16px", fontWeight: 600, color: "var(--core-fleet-black)" } }, "\u26A1 Mesh P2P Distribution & Node Health"), /* @__PURE__ */ react.createElement("p", { style: { margin: "4px 0 0", fontSize: "12px", opacity: 0.7 } }, "Decentralized peer-to-peer software package distribution & WAN egress optimization")), /* @__PURE__ */ react.createElement(
-      "span",
-      {
-        style: {
-          background: "rgba(0, 229, 255, 0.15)",
-          color: "var(--core-vibrant-blue)",
-          padding: "4px 10px",
-          borderRadius: "12px",
-          fontSize: "12px",
-          fontWeight: 600
-        }
-      },
-      "\u25CF ",
-      (stats == null ? void 0 : stats.active_seeders_count) || 0,
-      " Active Mesh Nodes"
-    )),
-    /* @__PURE__ */ react.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "16px", marginBottom: "16px" } }, /* @__PURE__ */ react.createElement("div", { style: { background: "rgba(0,0,0,0.2)", padding: "12px 16px", borderRadius: "6px" } }, /* @__PURE__ */ react.createElement("div", { style: { fontSize: "11px", textTransform: "uppercase", opacity: 0.6 } }, "Bandwidth Saved"), /* @__PURE__ */ react.createElement("div", { style: { fontSize: "22px", fontWeight: 700, color: "var(--status-success)" } }, stats ? `${stats.bandwidth_saved_percentage}%` : "--")), /* @__PURE__ */ react.createElement("div", { style: { background: "rgba(0,0,0,0.2)", padding: "12px 16px", borderRadius: "6px" } }, /* @__PURE__ */ react.createElement("div", { style: { fontSize: "11px", textTransform: "uppercase", opacity: 0.6 } }, "P2P Data Delivered"), /* @__PURE__ */ react.createElement("div", { style: { fontSize: "22px", fontWeight: 700, color: "var(--core-vibrant-blue)" } }, stats ? formatBytes(stats.bytes_transferred_p2p) : "--")), /* @__PURE__ */ react.createElement("div", { style: { background: "rgba(0,0,0,0.2)", padding: "12px 16px", borderRadius: "6px" } }, /* @__PURE__ */ react.createElement("div", { style: { fontSize: "11px", textTransform: "uppercase", opacity: 0.6 } }, "P2P Cached Software"), /* @__PURE__ */ react.createElement("div", { style: { fontSize: "22px", fontWeight: 700, color: "var(--core-fleet-black)" } }, stats ? `${stats.total_packages_shared} Packages` : "--"))),
-    stats && stats.active_peers && stats.active_peers.length > 0 && /* @__PURE__ */ react.createElement("div", { style: { marginTop: "12px" } }, /* @__PURE__ */ react.createElement("div", { style: { fontSize: "12px", fontWeight: 600, marginBottom: "8px", opacity: 0.8 } }, "Active Peer Nodes"), /* @__PURE__ */ react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "6px" } }, stats.active_peers.slice(0, 3).map((peer) => /* @__PURE__ */ react.createElement(
+    /* @__PURE__ */ react.createElement(
       "div",
       {
-        key: peer.host_id,
         style: {
           display: "flex",
           justifyContent: "space-between",
-          fontSize: "12px",
-          padding: "6px 10px",
-          background: "rgba(0,0,0,0.15)",
-          borderRadius: "4px"
+          alignItems: "center",
+          marginBottom: "16px"
         }
       },
-      /* @__PURE__ */ react.createElement("span", null, "\u{1F5A5}\uFE0F ", peer.hostname, " (", peer.ip_address, ")"),
-      /* @__PURE__ */ react.createElement("span", { style: { color: "var(--core-vibrant-blue)" } }, peer.cached_chunks, " chunks cached \u2022 ", formatBytes(peer.bytes_served), " served")
+      /* @__PURE__ */ react.createElement("div", null, /* @__PURE__ */ react.createElement(
+        "h3",
+        {
+          style: {
+            margin: 0,
+            fontSize: "16px",
+            fontWeight: 600,
+            color: "var(--core-fleet-black, #ffffff)"
+          }
+        },
+        "\u26A1 Mesh Fleet Health & Node Status"
+      ), /* @__PURE__ */ react.createElement(
+        "p",
+        {
+          style: {
+            margin: "4px 0 0",
+            fontSize: "12px",
+            opacity: 0.75,
+            color: "var(--core-fleet-white, #b3c0d8)"
+          }
+        },
+        "Live connectivity, operating system distribution, and fleet nodes"
+      )),
+      /* @__PURE__ */ react.createElement(
+        "span",
+        {
+          style: {
+            background: "rgba(0, 229, 255, 0.15)",
+            color: "var(--core-vibrant-blue, #00e5ff)",
+            padding: "4px 12px",
+            borderRadius: "12px",
+            fontSize: "12px",
+            fontWeight: 600,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px"
+          }
+        },
+        /* @__PURE__ */ react.createElement(
+          "span",
+          {
+            style: {
+              width: "8px",
+              height: "8px",
+              borderRadius: "50%",
+              backgroundColor: onlineHosts > 0 ? "#2ecc71" : "#e74c3c",
+              display: "inline-block"
+            }
+          }
+        ),
+        isLoading ? "Syncing nodes..." : `${onlineHosts} / ${totalHosts} Nodes Online`
+      )
+    ),
+    /* @__PURE__ */ react.createElement(
+      "div",
+      {
+        style: {
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+          gap: "16px",
+          marginBottom: "16px"
+        }
+      },
+      /* @__PURE__ */ react.createElement(
+        react_router_es/* Link */.N_,
+        {
+          to: `${paths/* default */.A.MANAGE_HOSTS}?status=online`,
+          style: { textDecoration: "none" }
+        },
+        /* @__PURE__ */ react.createElement(
+          "div",
+          {
+            style: {
+              background: "rgba(0,0,0,0.25)",
+              padding: "12px 16px",
+              borderRadius: "6px",
+              border: "1px solid rgba(255,255,255,0.05)",
+              transition: "transform 0.15s ease",
+              cursor: "pointer"
+            }
+          },
+          /* @__PURE__ */ react.createElement(
+            "div",
+            {
+              style: {
+                fontSize: "11px",
+                textTransform: "uppercase",
+                opacity: 0.65,
+                color: "#fff"
+              }
+            },
+            "Online Nodes"
+          ),
+          /* @__PURE__ */ react.createElement(
+            "div",
+            {
+              style: {
+                fontSize: "22px",
+                fontWeight: 700,
+                color: "#2ecc71",
+                margin: "4px 0"
+              }
+            },
+            isLoading ? "--" : onlineHosts
+          ),
+          /* @__PURE__ */ react.createElement("div", { style: { fontSize: "11px", opacity: 0.6, color: "#fff" } }, "Communicating & healthy")
+        )
+      ),
+      /* @__PURE__ */ react.createElement(
+        react_router_es/* Link */.N_,
+        {
+          to: `${paths/* default */.A.MANAGE_HOSTS}?status=offline`,
+          style: { textDecoration: "none" }
+        },
+        /* @__PURE__ */ react.createElement(
+          "div",
+          {
+            style: {
+              background: "rgba(0,0,0,0.25)",
+              padding: "12px 16px",
+              borderRadius: "6px",
+              border: "1px solid rgba(255,255,255,0.05)",
+              cursor: "pointer"
+            }
+          },
+          /* @__PURE__ */ react.createElement(
+            "div",
+            {
+              style: {
+                fontSize: "11px",
+                textTransform: "uppercase",
+                opacity: 0.65,
+                color: "#fff"
+              }
+            },
+            "Offline Nodes"
+          ),
+          /* @__PURE__ */ react.createElement(
+            "div",
+            {
+              style: {
+                fontSize: "22px",
+                fontWeight: 700,
+                color: offlineHosts > 0 ? "#f39c12" : "#95a5a6",
+                margin: "4px 0"
+              }
+            },
+            isLoading ? "--" : offlineHosts
+          ),
+          /* @__PURE__ */ react.createElement("div", { style: { fontSize: "11px", opacity: 0.6, color: "#fff" } }, "Awaiting check-in")
+        )
+      ),
+      /* @__PURE__ */ react.createElement(react_router_es/* Link */.N_, { to: paths/* default */.A.MANAGE_HOSTS, style: { textDecoration: "none" } }, /* @__PURE__ */ react.createElement(
+        "div",
+        {
+          style: {
+            background: "rgba(0,0,0,0.25)",
+            padding: "12px 16px",
+            borderRadius: "6px",
+            border: "1px solid rgba(255,255,255,0.05)",
+            cursor: "pointer"
+          }
+        },
+        /* @__PURE__ */ react.createElement(
+          "div",
+          {
+            style: {
+              fontSize: "11px",
+              textTransform: "uppercase",
+              opacity: 0.65,
+              color: "#fff"
+            }
+          },
+          "OS Distribution"
+        ),
+        /* @__PURE__ */ react.createElement(
+          "div",
+          {
+            style: {
+              fontSize: "18px",
+              fontWeight: 700,
+              color: "var(--core-vibrant-blue, #00e5ff)",
+              margin: "4px 0"
+            }
+          },
+          isLoading ? "--" : `${windowsCount} Win \u2022 ${macCount} Mac \u2022 ${linuxCount} Linux`
+        ),
+        /* @__PURE__ */ react.createElement("div", { style: { fontSize: "11px", opacity: 0.6, color: "#fff" } }, totalHosts, " total enrolled devices")
+      ))
+    ),
+    /* @__PURE__ */ react.createElement("div", { style: { marginTop: "16px" } }, /* @__PURE__ */ react.createElement(
+      "div",
+      {
+        style: {
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          fontSize: "12px",
+          fontWeight: 600,
+          marginBottom: "10px",
+          opacity: 0.85,
+          color: "#fff"
+        }
+      },
+      /* @__PURE__ */ react.createElement("span", null, "Active Fleet Nodes"),
+      /* @__PURE__ */ react.createElement(
+        react_router_es/* Link */.N_,
+        {
+          to: paths/* default */.A.MANAGE_HOSTS,
+          style: {
+            color: "var(--core-vibrant-blue, #00e5ff)",
+            textDecoration: "none",
+            fontSize: "11px",
+            fontWeight: 500
+          }
+        },
+        "Manage all ",
+        totalHosts,
+        " hosts \u2192"
+      )
+    ), isLoading ? /* @__PURE__ */ react.createElement(
+      "div",
+      {
+        style: {
+          fontSize: "12px",
+          opacity: 0.6,
+          color: "#fff",
+          padding: "10px"
+        }
+      },
+      "Loading active nodes..."
+    ) : hosts.length === 0 ? /* @__PURE__ */ react.createElement(
+      "div",
+      {
+        style: {
+          fontSize: "12px",
+          opacity: 0.6,
+          color: "#fff",
+          padding: "10px"
+        }
+      },
+      "No hosts enrolled yet."
+    ) : /* @__PURE__ */ react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "6px" } }, hosts.slice(0, 6).map((host) => /* @__PURE__ */ react.createElement(
+      "div",
+      {
+        key: host.id,
+        style: {
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          fontSize: "12px",
+          padding: "8px 12px",
+          background: "rgba(0,0,0,0.2)",
+          borderRadius: "4px",
+          border: "1px solid rgba(255,255,255,0.04)"
+        }
+      },
+      /* @__PURE__ */ react.createElement(
+        "div",
+        {
+          style: {
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap"
+          }
+        },
+        /* @__PURE__ */ react.createElement("span", { style: { fontSize: "14px" } }, getPlatformIcon(host.platform)),
+        /* @__PURE__ */ react.createElement(
+          react_router_es/* Link */.N_,
+          {
+            to: paths/* default */.A.HOST_DETAILS(host.id),
+            style: {
+              fontWeight: 600,
+              color: "var(--core-vibrant-blue, #00e5ff)",
+              textDecoration: "none"
+            }
+          },
+          host.hostname
+        ),
+        /* @__PURE__ */ react.createElement("span", { style: { opacity: 0.5, fontSize: "11px", color: "#fff" } }, "(", host.primary_ip || "No IP", ")"),
+        /* @__PURE__ */ react.createElement(
+          "span",
+          {
+            style: {
+              opacity: 0.7,
+              fontSize: "11px",
+              background: "rgba(255,255,255,0.08)",
+              padding: "2px 6px",
+              borderRadius: "4px",
+              color: "#fff"
+            }
+          },
+          host.os_version || host.platform
+        )
+      ),
+      /* @__PURE__ */ react.createElement(
+        "div",
+        {
+          style: {
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+            flexShrink: 0
+          }
+        },
+        /* @__PURE__ */ react.createElement(
+          "span",
+          {
+            style: {
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "5px",
+              fontSize: "11px",
+              color: host.status === "online" ? "#2ecc71" : "rgba(255,255,255,0.5)"
+            }
+          },
+          /* @__PURE__ */ react.createElement(
+            "span",
+            {
+              style: {
+                width: "6px",
+                height: "6px",
+                borderRadius: "50%",
+                backgroundColor: host.status === "online" ? "#2ecc71" : "#95a5a6"
+              }
+            }
+          ),
+          host.status === "online" ? "Online" : "Offline"
+        ),
+        /* @__PURE__ */ react.createElement(
+          react_router_es/* Link */.N_,
+          {
+            to: paths/* default */.A.HOST_DETAILS(host.id),
+            style: {
+              fontSize: "11px",
+              color: "var(--core-fleet-white, #b3c0d8)",
+              textDecoration: "none",
+              opacity: 0.8
+            }
+          },
+          "View \u2192"
+        )
+      )
     ))))
   );
 };
@@ -5711,8 +6017,6 @@ const ActivityFeedAutomationsModal = ({
 
 
 
-// EXTERNAL MODULE: ./node_modules/react-router/es/index.js + 32 modules
-var react_router_es = __webpack_require__(24179);
 // EXTERNAL MODULE: ./frontend/components/buttons/AutomationsButton/index.ts + 1 modules
 var AutomationsButton = __webpack_require__(85396);
 ;// ./frontend/pages/DashboardPage/components/InfoCard/InfoCard.tsx

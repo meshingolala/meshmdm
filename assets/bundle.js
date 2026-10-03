@@ -113502,7 +113502,7 @@ const LazyPolicyDetailsPage = lazyPage(
   () => Promise.all(/* import() | policies */[__webpack_require__.e(96), __webpack_require__.e(76), __webpack_require__.e(365)]).then(__webpack_require__.bind(__webpack_require__, 74496))
 );
 const LazyDashboardPage = lazyPage(
-  () => Promise.all(/* import() | dashboard */[__webpack_require__.e(96), __webpack_require__.e(76), __webpack_require__.e(945)]).then(__webpack_require__.bind(__webpack_require__, 70463))
+  () => Promise.all(/* import() | dashboard */[__webpack_require__.e(96), __webpack_require__.e(76), __webpack_require__.e(945)]).then(__webpack_require__.bind(__webpack_require__, 86791))
 );
 const LazyOrgSettingsPage = lazyPage(
   () => Promise.all(/* import() | admin */[__webpack_require__.e(96), __webpack_require__.e(76), __webpack_require__.e(884)]).then(__webpack_require__.bind(__webpack_require__, 27987))
