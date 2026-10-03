@@ -653,6 +653,7 @@ const routes = (
               </Route>
               <Route path="reports" component={LazyHostDetailsPage} />
               <Route path="policies" component={LazyHostDetailsPage} />
+              <Route path="windows-updates" component={LazyHostDetailsPage} />
             </Route>
 
             <Redirect

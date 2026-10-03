@@ -1364,6 +1364,7 @@ const HostDetailsPage = ({
   const showReportsTab =
     !isIosOrIpadosHost && !isAndroidHost && !isChromeOsHost;
   const showPoliciesTab = !isIosOrIpadosHost && !isAndroidHost;
+  const showWindowsUpdatesTab = isWindowsHost;
 
   const failedControlsCount = countFailedControls(controls);
 
@@ -1416,6 +1417,15 @@ const HostDetailsPage = ({
             title: "policies",
             pathname: PATHS.HOST_POLICIES(hostIdFromURL),
             count: failingPoliciesCount,
+          },
+        ]
+      : []),
+    ...(showWindowsUpdatesTab
+      ? [
+          {
+            name: "Windows Updates",
+            title: "windows-updates",
+            pathname: PATHS.HOST_WINDOWS_UPDATES(hostIdFromURL),
           },
         ]
       : []),
@@ -1852,12 +1862,6 @@ const HostDetailsPage = ({
                     hostUsersEnabled={featuresConfig?.enable_host_users}
                   />
                 )}
-                {isWindowsHost && (
-                  <WindowsUpdatesCard
-                    host={host}
-                    className={fullWidthCardClass}
-                  />
-                )}
                 {showCertificatesCard && (
                   <CertificatesCard
                     className={fullWidthCardClass}
@@ -1955,6 +1959,14 @@ const HostDetailsPage = ({
                         })
                       )
                     }
+                  />
+                </TabPanel>
+              )}
+              {showWindowsUpdatesTab && (
+                <TabPanel>
+                  <WindowsUpdatesCard
+                    host={host}
+                    className={fullWidthCardClass}
                   />
                 </TabPanel>
               )}

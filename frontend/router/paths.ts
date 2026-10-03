@@ -193,6 +193,9 @@ export default {
   HOST_POLICIES: (id: number): string => {
     return `${URL_PREFIX}/hosts/${id}/policies`;
   },
+  HOST_WINDOWS_UPDATES: (id: number): string => {
+    return `${URL_PREFIX}/hosts/${id}/windows-updates`;
+  },
   HOST_REPORT_RESULTS: (hostId: number, queryId: number): string =>
     `${URL_PREFIX}/hosts/${hostId}/reports/${queryId}`,
   DEVICE_USER_DETAILS: (deviceAuthToken: string): string => {
