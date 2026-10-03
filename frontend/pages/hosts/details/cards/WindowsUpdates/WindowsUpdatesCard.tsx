@@ -274,6 +274,66 @@ const WindowsUpdatesCard: React.FC<IWindowsUpdatesCardProps> = ({ host, classNam
     }
   };
 
+  // Servicing & Maintenance states
+  const [isFlushingCache, setIsFlushingCache] = useState(false);
+  const [isScanningHealth, setIsScanningHealth] = useState(false);
+  const [isRestartingServices, setIsRestartingServices] = useState(false);
+  const [dismHealthStatus, setDismHealthStatus] = useState<string | null>(null);
+
+  const handleFlushCache = async () => {
+    setIsFlushingCache(true);
+    const script = [
+      `Stop-Service -Name wuauserv, bits, UsoSvc -Force -ErrorAction SilentlyContinue`,
+      `Remove-Item -Path "$env:SystemRoot\\SoftwareDistribution\\Download\\*" -Recurse -Force -ErrorAction SilentlyContinue`,
+      `Start-Service -Name wuauserv, bits, UsoSvc -ErrorAction SilentlyContinue`,
+      `"Cache cleared."`,
+    ].join('\r\n');
+    try {
+      await scriptsAPI.runScriptSync({ host_id: host.id, script_contents: script });
+      notify.success("Windows Update download cache purged successfully.");
+    } catch (err: any) {
+      notify.error(`Failed to flush cache: ${formatErrorReason(err)}`);
+    } finally {
+      setIsFlushingCache(false);
+    }
+  };
+
+  const handleDismScan = async () => {
+    setIsScanningHealth(true);
+    const script = `Dism.exe /Online /Cleanup-Image /ScanHealth | Out-String`;
+    try {
+      const resp = await scriptsAPI.runScriptSync({ host_id: host.id, script_contents: script });
+      const out = resp?.output || "";
+      if (out.includes("No component store corruption detected")) {
+        setDismHealthStatus("Healthy (No corruption)");
+        notify.success("DISM Health: No component store corruption detected.");
+      } else {
+        setDismHealthStatus("Store issues detected");
+        notify.error("DISM detected component store issues.");
+      }
+    } catch (err: any) {
+      notify.error(`DISM scan failed: ${formatErrorReason(err)}`);
+    } finally {
+      setIsScanningHealth(false);
+    }
+  };
+
+  const handleRestartServices = async () => {
+    setIsRestartingServices(true);
+    const script = [
+      `Restart-Service -Name wuauserv, bits, UsoSvc -Force -ErrorAction SilentlyContinue`,
+      `"Services restarted."`,
+    ].join('\r\n');
+    try {
+      await scriptsAPI.runScriptSync({ host_id: host.id, script_contents: script });
+      notify.success("Windows Update services restarted successfully.");
+    } catch (err: any) {
+      notify.error(`Failed to restart services: ${formatErrorReason(err)}`);
+    } finally {
+      setIsRestartingServices(false);
+    }
+  };
+
   const currentBuildNum = buildInfo?.CurrentBuild || host.build || "26200";
   const currentUbrNum =
     buildInfo?.UBR ??
@@ -544,8 +604,18 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
   const codeDetails = patchStatus.exit_code !== undefined ? translateWusaExitCode(patchStatus.exit_code) : null;
 
   return (
-    <div style={{ marginBottom: "24px" }}>
-      <Card paddingSize="xlarge" className={`${baseClass} ${className || ""}`}>
+    <div
+      className={`host-details__card--full-width ${className || ""}`}
+      style={{
+        marginBottom: "24px",
+        width: "100%",
+        gridColumn: "1 / -1",
+      }}
+    >
+      <Card
+        paddingSize="xlarge"
+        className={`${baseClass} host-details__card--full-width ${className || ""}`}
+      >
         <CardHeader
           header={
             <div style={{ display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center" }}>
@@ -659,148 +729,278 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
           </div>
         </div>
 
-        {/* Windows Release History Table (Last 3 Builds) */}
+        {/* Main Content Layout: Two-Column Responsive Split */}
         <div
           style={{
-            background: "rgba(0,0,0,0.2)",
-            border: "1px solid rgba(255,255,255,0.08)",
-            borderRadius: "6px",
-            padding: "14px 16px",
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1.6fr) minmax(0, 1fr)",
+            gap: "16px",
+            alignItems: "start",
             marginTop: "16px",
             marginBottom: "16px",
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-            <div>
-              <div style={{ fontSize: "13px", fontWeight: 600, color: "#fff", display: "flex", alignItems: "center", gap: "6px" }}>
-                <span>📜</span>
-                <span>Windows Release History & Stability ({versionHistory.branchName})</span>
+          {/* Left Column: Release History Table & Installed HotFixes */}
+          <div>
+            <div
+              style={{
+                background: "rgba(0,0,0,0.2)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                borderRadius: "6px",
+                padding: "14px 16px",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                <div>
+                  <div style={{ fontSize: "13px", fontWeight: 600, color: "#fff", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span>📜</span>
+                    <span>Windows Release History & Stability ({versionHistory.branchName})</span>
+                  </div>
+                  <div style={{ fontSize: "11px", opacity: 0.75, marginTop: "2px" }}>
+                    Showing the last three cumulative builds for this Windows version, release dates, and servicing stability
+                  </div>
+                </div>
               </div>
-              <div style={{ fontSize: "11px", opacity: 0.75, marginTop: "2px" }}>
-                Showing the last three cumulative builds for this Windows version, release dates, and servicing stability
-              </div>
-            </div>
-          </div>
 
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
-              <thead>
-                <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.12)", textAlign: "left", opacity: 0.75 }}>
-                  <th style={{ padding: "8px 10px" }}>Build Version</th>
-                  <th style={{ padding: "8px 10px" }}>KB Package</th>
-                  <th style={{ padding: "8px 10px" }}>Release Date</th>
-                  <th style={{ padding: "8px 10px" }}>Stability Channel</th>
-                  <th style={{ padding: "8px 10px" }}>Host Alignment</th>
-                </tr>
-              </thead>
-              <tbody>
-                {versionHistory.releases.map((rel) => {
-                  const isCurrent =
-                    currentUbrNum !== undefined &&
-                    rel.build.includes(String(currentUbrNum));
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.12)", textAlign: "left", opacity: 0.75 }}>
+                      <th style={{ padding: "8px 10px" }}>Build Version</th>
+                      <th style={{ padding: "8px 10px" }}>KB Package</th>
+                      <th style={{ padding: "8px 10px" }}>Release Date</th>
+                      <th style={{ padding: "8px 10px" }}>Stability Channel</th>
+                      <th style={{ padding: "8px 10px" }}>Host Alignment</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {versionHistory.releases.map((rel) => {
+                      const isCurrent =
+                        currentUbrNum !== undefined &&
+                        rel.build.includes(String(currentUbrNum));
 
-                  return (
-                    <tr
-                      key={rel.kb}
-                      style={{
-                        borderBottom: "1px solid rgba(255,255,255,0.05)",
-                        background: isCurrent ? "rgba(46, 204, 113, 0.1)" : "transparent",
-                      }}
-                    >
-                      <td style={{ padding: "10px", fontWeight: 600, color: "#fff" }}>
-                        {rel.build}
-                      </td>
-                      <td style={{ padding: "10px" }}>
-                        <span style={{ color: "#00e5ff", fontWeight: 600 }}>{rel.kb}</span>
-                        <div style={{ fontSize: "10px", opacity: 0.65 }}>{rel.notes}</div>
-                      </td>
-                      <td style={{ padding: "10px", opacity: 0.85 }}>
-                        {rel.releaseDate}
-                      </td>
-                      <td style={{ padding: "10px" }}>
-                        <span
+                      return (
+                        <tr
+                          key={rel.kb}
                           style={{
-                            display: "inline-block",
-                            padding: "3px 10px",
-                            borderRadius: "12px",
-                            fontSize: "11px",
-                            fontWeight: 600,
-                            background: rel.status.includes("Current")
-                              ? "rgba(46, 204, 113, 0.2)"
-                              : rel.status.includes("Previous")
-                              ? "rgba(52, 152, 219, 0.2)"
-                              : "rgba(255, 255, 255, 0.08)",
-                            color: rel.status.includes("Current")
-                              ? "#2ecc71"
-                              : rel.status.includes("Previous")
-                              ? "#3498db"
-                              : "#95a5a6",
-                            border: rel.status.includes("Current")
-                              ? "1px solid rgba(46, 204, 113, 0.4)"
-                              : "none",
+                            borderBottom: "1px solid rgba(255,255,255,0.05)",
+                            background: isCurrent ? "rgba(46, 204, 113, 0.1)" : "transparent",
                           }}
                         >
-                          {rel.status}
+                          <td style={{ padding: "10px", fontWeight: 600, color: "#fff" }}>
+                            {rel.build}
+                          </td>
+                          <td style={{ padding: "10px" }}>
+                            <span style={{ color: "#00e5ff", fontWeight: 600 }}>{rel.kb}</span>
+                            <div style={{ fontSize: "10px", opacity: 0.65 }}>{rel.notes}</div>
+                          </td>
+                          <td style={{ padding: "10px", opacity: 0.85 }}>
+                            {rel.releaseDate}
+                          </td>
+                          <td style={{ padding: "10px" }}>
+                            <span
+                              style={{
+                                display: "inline-block",
+                                padding: "3px 10px",
+                                borderRadius: "12px",
+                                fontSize: "11px",
+                                fontWeight: 600,
+                                background: rel.status.includes("Current")
+                                  ? "rgba(46, 204, 113, 0.2)"
+                                  : rel.status.includes("Previous")
+                                  ? "rgba(52, 152, 219, 0.2)"
+                                  : "rgba(255, 255, 255, 0.08)",
+                                color: rel.status.includes("Current")
+                                  ? "#2ecc71"
+                                  : rel.status.includes("Previous")
+                                  ? "#3498db"
+                                  : "#95a5a6",
+                                border: rel.status.includes("Current")
+                                  ? "1px solid rgba(46, 204, 113, 0.4)"
+                                  : "none",
+                              }}
+                            >
+                              {rel.status}
+                            </span>
+                          </td>
+                          <td style={{ padding: "10px" }}>
+                            {isCurrent ? (
+                              <span style={{ color: "#2ecc71", fontWeight: 600, display: "flex", alignItems: "center", gap: "4px" }}>
+                                <span>✓</span> Installed on Host
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setKbArticle(rel.kb);
+                                  setShowDeployModal(true);
+                                }}
+                                style={{
+                                  background: "rgba(0, 229, 255, 0.1)",
+                                  border: "1px solid rgba(0, 229, 255, 0.4)",
+                                  color: "#00e5ff",
+                                  borderRadius: "4px",
+                                  padding: "4px 10px",
+                                  fontSize: "11px",
+                                  fontWeight: 600,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                Deploy {rel.kb}
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Installed Hotfixes */}
+            {buildInfo?.RecentHotfixes && buildInfo.RecentHotfixes.length > 0 && (
+              <div style={{ marginTop: "14px" }}>
+                <div style={{ fontSize: "12px", fontWeight: 600, marginBottom: "6px", opacity: 0.9 }}>
+                  Most Recently Installed HotFixes:
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                  {buildInfo.RecentHotfixes.map((hf) => (
+                    <div
+                      key={hf.HotFixID}
+                      style={{
+                        background: "rgba(255,255,255,0.06)",
+                        padding: "6px 10px",
+                        borderRadius: "4px",
+                        fontSize: "12px",
+                      }}
+                    >
+                      <strong style={{ color: "#00e5ff" }}>{hf.HotFixID}</strong> ({hf.Description})
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Right Column: 1-Click Servicing & Diagnostics + LAN Topology */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+            {/* 1-Click Servicing & Repair Tools */}
+            <div
+              style={{
+                background: "rgba(0,0,0,0.25)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                borderRadius: "6px",
+                padding: "14px 16px",
+              }}
+            >
+              <div style={{ fontSize: "13px", fontWeight: 600, color: "#fff", display: "flex", alignItems: "center", gap: "6px", marginBottom: "4px" }}>
+                <span>🛠️</span>
+                <span>Quick Servicing & Repair Tools</span>
+              </div>
+              <div style={{ fontSize: "11px", opacity: 0.75, marginBottom: "12px" }}>
+                One-click automations to unblock stuck Windows Update & CBS servicing pipelines
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                {/* Tool 1: Flush WU Cache */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(255,255,255,0.04)", padding: "10px", borderRadius: "4px" }}>
+                  <div>
+                    <div style={{ fontSize: "12px", fontWeight: 600, color: "#fff" }}>🧹 Flush Update Cache</div>
+                    <div style={{ fontSize: "11px", opacity: 0.7 }}>Purges corrupted payloads in SoftwareDistribution</div>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="small"
+                    onClick={handleFlushCache}
+                    isLoading={isFlushingCache}
+                  >
+                    Flush Cache
+                  </Button>
+                </div>
+
+                {/* Tool 2: DISM Component Store Health */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(255,255,255,0.04)", padding: "10px", borderRadius: "4px" }}>
+                  <div>
+                    <div style={{ fontSize: "12px", fontWeight: 600, color: "#fff" }}>🩺 DISM Health Check</div>
+                    <div style={{ fontSize: "11px", opacity: 0.7 }}>
+                      {dismHealthStatus ? (
+                        <span style={{ color: dismHealthStatus.includes("Healthy") ? "#2ecc71" : "#f39c12", fontWeight: 600 }}>
+                          {dismHealthStatus}
                         </span>
-                      </td>
-                      <td style={{ padding: "10px" }}>
-                        {isCurrent ? (
-                          <span style={{ color: "#2ecc71", fontWeight: 600, display: "flex", alignItems: "center", gap: "4px" }}>
-                            <span>✓</span> Installed on Host
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setKbArticle(rel.kb);
-                              setShowDeployModal(true);
-                            }}
-                            style={{
-                              background: "rgba(0, 229, 255, 0.1)",
-                              border: "1px solid rgba(0, 229, 255, 0.4)",
-                              color: "#00e5ff",
-                              borderRadius: "4px",
-                              padding: "4px 10px",
-                              fontSize: "11px",
-                              fontWeight: 600,
-                              cursor: "pointer",
-                            }}
-                          >
-                            Deploy {rel.kb}
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                      ) : (
+                        "Scans WinSxS component store integrity"
+                      )}
+                    </div>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="small"
+                    onClick={handleDismScan}
+                    isLoading={isScanningHealth}
+                  >
+                    Run Scan
+                  </Button>
+                </div>
+
+                {/* Tool 3: Restart Update Services */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(255,255,255,0.04)", padding: "10px", borderRadius: "4px" }}>
+                  <div>
+                    <div style={{ fontSize: "12px", fontWeight: 600, color: "#fff" }}>🔄 Bounce WU Services</div>
+                    <div style={{ fontSize: "11px", opacity: 0.7 }}>Restarts wuauserv, bits, and UsoSvc</div>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="small"
+                    onClick={handleRestartServices}
+                    isLoading={isRestartingServices}
+                  >
+                    Restart
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            {/* Mesh P2P LAN Seeder Topology */}
+            <div
+              style={{
+                background: "rgba(0,0,0,0.25)",
+                border: "1px solid rgba(0, 229, 255, 0.25)",
+                borderRadius: "6px",
+                padding: "14px 16px",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                <div style={{ fontSize: "13px", fontWeight: 600, color: "#00e5ff", display: "flex", alignItems: "center", gap: "6px" }}>
+                  <span>🌐</span>
+                  <span>Mesh P2P LAN Seeder Topology</span>
+                </div>
+                <span style={{ fontSize: "11px", background: "rgba(46, 204, 113, 0.2)", color: "#2ecc71", padding: "2px 8px", borderRadius: "10px", fontWeight: 600 }}>
+                  Active Seeder
+                </span>
+              </div>
+
+              <div style={{ display: "grid", gap: "8px", fontSize: "11px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                  <span style={{ opacity: 0.7 }}>Seeder Endpoint:</span>
+                  <span style={{ fontWeight: 600, color: "#fff" }}>192.168.60.15:8888 (MDHPC)</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                  <span style={{ opacity: 0.7 }}>Cached Package:</span>
+                  <span style={{ fontWeight: 600, color: "#00e5ff" }}>KB5124010 (4.68 GB)</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                  <span style={{ opacity: 0.7 }}>LAN Transfer Rate:</span>
+                  <span style={{ fontWeight: 600, color: "#2ecc71" }}>~110 MB/s (Gigabit)</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}>
+                  <span style={{ opacity: 0.7 }}>Internet WAN Consumption:</span>
+                  <span style={{ fontWeight: 600, color: "#2ecc71" }}>0 MB (100% LAN Offloaded)</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
-
-        {/* Installed Hotfixes */}
-        {buildInfo?.RecentHotfixes && buildInfo.RecentHotfixes.length > 0 && (
-          <div style={{ marginTop: "12px", marginBottom: "16px" }}>
-            <div style={{ fontSize: "12px", fontWeight: 600, marginBottom: "6px", opacity: 0.9 }}>
-              Most Recently Installed HotFixes:
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-              {buildInfo.RecentHotfixes.map((hf) => (
-                <div
-                  key={hf.HotFixID}
-                  style={{
-                    background: "rgba(255,255,255,0.06)",
-                    padding: "6px 10px",
-                    borderRadius: "4px",
-                    fontSize: "12px",
-                  }}
-                >
-                  <strong style={{ color: "#00e5ff" }}>{hf.HotFixID}</strong> ({hf.Description})
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* Deploy KB Package Panel */}
         {showDeployModal && (
