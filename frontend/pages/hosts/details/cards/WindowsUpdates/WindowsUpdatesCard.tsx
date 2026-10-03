@@ -3,6 +3,7 @@ import Button from "components/buttons/Button";
 import Card from "components/Card";
 import CardHeader from "components/CardHeader";
 import Modal from "components/Modal";
+import StatusIndicator from "components/StatusIndicator";
 import { notify } from "components/ToastNotification";
 import scriptsAPI from "services/entities/scripts";
 import p2pAPI from "services/entities/p2p";
@@ -670,278 +671,191 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
   const codeDetails = patchStatus.exit_code !== undefined ? translateWusaExitCode(patchStatus.exit_code) : null;
 
   return (
-    <div
-      className={`host-details__card--full-width ${className || ""}`}
-      style={{
-        marginBottom: "24px",
-        width: "100%",
-        gridColumn: "1 / -1",
-      }}
-    >
+    <div className={`host-details__card--full-width ${className || ""}`}>
       <Card
         paddingSize="xlarge"
         className={`${baseClass} host-details__card--full-width ${className || ""}`}
       >
         <CardHeader
           header={
-            <div style={{ display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <span style={{ fontSize: "20px" }}>🪟</span>
+            <div className={`${baseClass}__header-content`}>
+              <div className={`${baseClass}__header-title`}>
                 <div>
-                  <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 600 }}>
-                    Windows Updates & Servicing Stack (Mesh P2P)
-                  </h2>
-                  <span style={{ fontSize: "12px", opacity: 0.75 }}>
+                  <h2>Windows Updates & Servicing Stack</h2>
+                  <p className={`${baseClass}__header-subtitle`}>
                     Bypass WSUS/GPO lockouts, deploy offline cumulative updates, and distribute over local LAN
-                  </span>
+                  </p>
                 </div>
               </div>
-              <div style={{ display: "flex", gap: "8px" }}>
+              <div className={`${baseClass}__header-actions`}>
                 <Button
                   variant="secondary"
                   size="small"
                   onClick={handleQueryBuild}
                   isLoading={isQuerying}
                 >
-                  🔍 Query Live Build
+                  Query live build
                 </Button>
                 <Button
                   variant="default"
                   size="small"
                   onClick={() => setShowDeployModal(!showDeployModal)}
                 >
-                  ⚡ Deploy KB Package
+                  Deploy KB package
                 </Button>
               </div>
             </div>
           }
         />
 
-        {/* Build & Diagnostics Metrics */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-            gap: "12px",
-            marginTop: "16px",
-            marginBottom: "16px",
-          }}
-        >
-          <div style={{ background: "rgba(0,0,0,0.25)", padding: "10px 14px", borderRadius: "6px" }}>
-            <div style={{ fontSize: "11px", opacity: 0.7, textTransform: "uppercase" }}>Current Operating System</div>
-            <div style={{ fontSize: "15px", fontWeight: 600, color: "#fff", marginTop: "4px" }}>
-              {buildInfo?.ProductName || host.os_version || "Windows 11"}
+        {/* Build & Diagnostics Metrics Grid */}
+        <div className={`${baseClass}__metrics-grid`}>
+          <div className={`${baseClass}__metric-card`}>
+            <div>
+              <div className={`${baseClass}__metric-label`}>Current Operating System</div>
+              <div className={`${baseClass}__metric-value`}>
+                {buildInfo?.ProductName || host.os_version || "Windows 11"}
+              </div>
             </div>
-            <div style={{ fontSize: "12px", color: "var(--core-vibrant-blue, #00e5ff)" }}>
+            <div className={`${baseClass}__metric-subtext`}>
               Version: {buildInfo?.DisplayVersion || "25H2"}
             </div>
           </div>
 
-          <div style={{ background: "rgba(0,0,0,0.25)", padding: "10px 14px", borderRadius: "6px" }}>
-            <div style={{ fontSize: "11px", opacity: 0.7, textTransform: "uppercase" }}>Build & UBR</div>
-            <div style={{ fontSize: "15px", fontWeight: 600, color: "#fff", marginTop: "4px" }}>
-              {currentBuildNum}
-              {currentUbrNum ? `.${currentUbrNum}` : ""}
+          <div className={`${baseClass}__metric-card`}>
+            <div>
+              <div className={`${baseClass}__metric-label`}>Build & Revision (UBR)</div>
+              <div className={`${baseClass}__metric-value`}>
+                {currentBuildNum}
+                {currentUbrNum ? `.${currentUbrNum}` : ""}
+              </div>
             </div>
-            <div style={{ fontSize: "12px", opacity: 0.8 }}>
+            <div className={`${baseClass}__metric-subtext`}>
               {currentUbrNum && currentUbrNum >= 9550 ? (
-                <span style={{ color: "#2ecc71" }}>✓ Target Build Installed</span>
+                <StatusIndicator value="Target build installed" indicator="success" />
               ) : (
-                <span style={{ color: "#f39c12" }}>Update available (KB5124010)</span>
+                <StatusIndicator value="Update available (KB5124010)" indicator="warning" />
               )}
             </div>
           </div>
 
-          <div
-            style={{
-              background: "rgba(0,0,0,0.25)",
-              padding: "10px 14px",
-              borderRadius: "6px",
-              display: "flex",
-              flexDirection: "column",
-              justifyContent: "space-between",
-            }}
-          >
+          <div className={`${baseClass}__metric-card ${buildInfo?.RebootPending ? `${baseClass}__metric-card--reboot-pending` : ""}`}>
             <div>
-              <div style={{ fontSize: "11px", opacity: 0.7, textTransform: "uppercase" }}>Pending Reboot Status</div>
-              <div style={{ fontSize: "15px", fontWeight: 600, marginTop: "4px" }}>
+              <div className={`${baseClass}__metric-label`}>Pending Reboot Status</div>
+              <div className={`${baseClass}__metric-value`}>
                 {buildInfo?.RebootPending ? (
-                  <span style={{ color: "#e74c3c" }}>⚠️ Reboot Required</span>
+                  <StatusIndicator value="Reboot required" indicator="error" />
                 ) : (
-                  <span style={{ color: "#2ecc71" }}>✓ No Pending Reboot</span>
+                  <StatusIndicator value="No reboot pending" indicator="success" />
                 )}
               </div>
-              <div style={{ fontSize: "12px", opacity: 0.7, marginBottom: "6px" }}>CBS / WU Servicing Stack</div>
+              <div className={`${baseClass}__metric-subtext`}>CBS / WU Servicing Stack</div>
             </div>
 
-            <div style={{ marginTop: "8px" }}>
+            <div className={`${baseClass}__metric-action`}>
               <Button
                 variant={buildInfo?.RebootPending ? "alert" : "secondary"}
                 size="small"
                 onClick={() => setShowRebootConfirm(true)}
                 isLoading={isRebooting}
               >
-                🔄 {buildInfo?.RebootPending ? "Restart Host Now" : "Reboot Machine"}
+                {buildInfo?.RebootPending ? "Restart host now" : "Reboot machine"}
               </Button>
             </div>
           </div>
 
-          <div style={{ background: "rgba(0,0,0,0.25)", padding: "10px 14px", borderRadius: "6px" }}>
-            <div style={{ fontSize: "11px", opacity: 0.7, textTransform: "uppercase" }}>Mesh P2P LAN Mode</div>
-            <div style={{ fontSize: "15px", fontWeight: 600, color: "#00e5ff", marginTop: "4px" }}>
-              LAN Gigabit Streaming
+          <div className={`${baseClass}__metric-card`}>
+            <div>
+              <div className={`${baseClass}__metric-label`}>Mesh P2P LAN Mode</div>
+              <div className={`${baseClass}__metric-value`}>
+                LAN Gigabit Streaming
+              </div>
             </div>
-            <div style={{ fontSize: "12px", opacity: 0.8 }}>Saves ~4.68 GB WAN per machine</div>
+            <div className={`${baseClass}__metric-subtext`}>Saves ~4.68 GB WAN per machine</div>
           </div>
         </div>
 
         {/* Main Content Layout: Two-Column Responsive Split */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "minmax(0, 1.6fr) minmax(0, 1fr)",
-            gap: "16px",
-            alignItems: "start",
-            marginTop: "16px",
-            marginBottom: "16px",
-          }}
-        >
+        <div className={`${baseClass}__split-layout`}>
           {/* Left Column: Release History Table & Installed HotFixes */}
-          <div>
-            <div
-              style={{
-                background: "rgba(0,0,0,0.2)",
-                border: "1px solid rgba(255,255,255,0.08)",
-                borderRadius: "6px",
-                padding: "14px 16px",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                <div>
-                  <div style={{ fontSize: "13px", fontWeight: 600, color: "#fff", display: "flex", alignItems: "center", gap: "6px" }}>
-                    <span>📜</span>
-                    <span>Windows Release History & Stability ({versionHistory.branchName})</span>
-                  </div>
-                  <div style={{ fontSize: "11px", opacity: 0.75, marginTop: "2px" }}>
-                    Showing the last three cumulative builds for this Windows version, release dates, and servicing stability
-                  </div>
-                </div>
-              </div>
+          <div className={`${baseClass}__panel`}>
+            <div className={`${baseClass}__panel-header`}>
+              <h3>Windows Release History & Stability ({versionHistory.branchName})</h3>
+              <p>
+                Showing the last three cumulative builds for this Windows version, release dates, and servicing stability
+              </p>
+            </div>
 
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
-                  <thead>
-                    <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.12)", textAlign: "left", opacity: 0.75 }}>
-                      <th style={{ padding: "8px 10px" }}>Build Version</th>
-                      <th style={{ padding: "8px 10px" }}>KB Package</th>
-                      <th style={{ padding: "8px 10px" }}>Release Date</th>
-                      <th style={{ padding: "8px 10px" }}>Stability Channel</th>
-                      <th style={{ padding: "8px 10px" }}>Host Alignment</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {versionHistory.releases.map((rel) => {
-                      const isCurrent =
-                        currentUbrNum !== undefined &&
-                        rel.build.includes(String(currentUbrNum));
+            <div className={`${baseClass}__table-wrapper`}>
+              <table className={`${baseClass}__table`}>
+                <thead>
+                  <tr>
+                    <th>Build Version</th>
+                    <th>KB Package</th>
+                    <th>Release Date</th>
+                    <th>Stability Channel</th>
+                    <th>Host Alignment</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {versionHistory.releases.map((rel) => {
+                    const isCurrent =
+                      currentUbrNum !== undefined &&
+                      rel.build.includes(String(currentUbrNum));
 
-                      return (
-                        <tr
-                          key={rel.kb}
-                          style={{
-                            borderBottom: "1px solid rgba(255,255,255,0.05)",
-                            background: isCurrent ? "rgba(46, 204, 113, 0.1)" : "transparent",
-                          }}
-                        >
-                          <td style={{ padding: "10px", fontWeight: 600, color: "#fff" }}>
-                            {rel.build}
-                          </td>
-                          <td style={{ padding: "10px" }}>
-                            <span style={{ color: "#00e5ff", fontWeight: 600 }}>{rel.kb}</span>
-                            <div style={{ fontSize: "10px", opacity: 0.65 }}>{rel.notes}</div>
-                          </td>
-                          <td style={{ padding: "10px", opacity: 0.85 }}>
-                            {rel.releaseDate}
-                          </td>
-                          <td style={{ padding: "10px" }}>
-                            <span
-                              style={{
-                                display: "inline-block",
-                                padding: "3px 10px",
-                                borderRadius: "12px",
-                                fontSize: "11px",
-                                fontWeight: 600,
-                                background: rel.status.includes("Current")
-                                  ? "rgba(46, 204, 113, 0.2)"
-                                  : rel.status.includes("Previous")
-                                  ? "rgba(52, 152, 219, 0.2)"
-                                  : "rgba(255, 255, 255, 0.08)",
-                                color: rel.status.includes("Current")
-                                  ? "#2ecc71"
-                                  : rel.status.includes("Previous")
-                                  ? "#3498db"
-                                  : "#95a5a6",
-                                border: rel.status.includes("Current")
-                                  ? "1px solid rgba(46, 204, 113, 0.4)"
-                                  : "none",
+                    const pillClass = rel.status.includes("Current")
+                      ? `${baseClass}__status-pill--stable-current`
+                      : rel.status.includes("Previous")
+                      ? `${baseClass}__status-pill--stable-previous`
+                      : `${baseClass}__status-pill--superseded`;
+
+                    return (
+                      <tr
+                        key={rel.kb}
+                        className={isCurrent ? `${baseClass}__row--current` : ""}
+                      >
+                        <td style={{ fontWeight: 600 }}>{rel.build}</td>
+                        <td>
+                          <strong style={{ color: "var(--core-vibrant-blue)" }}>{rel.kb}</strong>
+                          <div style={{ fontSize: "11px", color: "var(--ui-fleet-black-50)" }}>{rel.notes}</div>
+                        </td>
+                        <td>{rel.releaseDate}</td>
+                        <td>
+                          <span className={`${baseClass}__status-pill ${pillClass}`}>
+                            {rel.status}
+                          </span>
+                        </td>
+                        <td>
+                          {isCurrent ? (
+                            <StatusIndicator value="Installed on host" indicator="success" />
+                          ) : (
+                            <Button
+                              variant="secondary"
+                              size="small"
+                              onClick={() => {
+                                setKbArticle(rel.kb);
+                                setShowDeployModal(true);
                               }}
                             >
-                              {rel.status}
-                            </span>
-                          </td>
-                          <td style={{ padding: "10px" }}>
-                            {isCurrent ? (
-                              <span style={{ color: "#2ecc71", fontWeight: 600, display: "flex", alignItems: "center", gap: "4px" }}>
-                                <span>✓</span> Installed on Host
-                              </span>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setKbArticle(rel.kb);
-                                  setShowDeployModal(true);
-                                }}
-                                style={{
-                                  background: "rgba(0, 229, 255, 0.1)",
-                                  border: "1px solid rgba(0, 229, 255, 0.4)",
-                                  color: "#00e5ff",
-                                  borderRadius: "4px",
-                                  padding: "4px 10px",
-                                  fontSize: "11px",
-                                  fontWeight: 600,
-                                  cursor: "pointer",
-                                }}
-                              >
-                                Deploy {rel.kb}
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                              Deploy {rel.kb}
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
 
             {/* Installed Hotfixes */}
             {buildInfo?.RecentHotfixes && buildInfo.RecentHotfixes.length > 0 && (
-              <div style={{ marginTop: "14px" }}>
-                <div style={{ fontSize: "12px", fontWeight: 600, marginBottom: "6px", opacity: 0.9 }}>
-                  Most Recently Installed HotFixes:
-                </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+              <div className={`${baseClass}__hotfixes-section`}>
+                <h4>Most Recently Installed HotFixes</h4>
+                <div className={`${baseClass}__hotfixes-list`}>
                   {buildInfo.RecentHotfixes.map((hf) => (
-                    <div
-                      key={hf.HotFixID}
-                      style={{
-                        background: "rgba(255,255,255,0.06)",
-                        padding: "6px 10px",
-                        borderRadius: "4px",
-                        fontSize: "12px",
-                      }}
-                    >
-                      <strong style={{ color: "#00e5ff" }}>{hf.HotFixID}</strong> ({hf.Description})
+                    <div key={hf.HotFixID} className={`${baseClass}__hotfix-badge`}>
+                      <strong>{hf.HotFixID}</strong> ({hf.Description})
                     </div>
                   ))}
                 </div>
@@ -949,31 +863,20 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
             )}
           </div>
 
-          {/* Right Column: 1-Click Servicing & Diagnostics + LAN Topology */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-            {/* 1-Click Servicing & Repair Tools */}
-            <div
-              style={{
-                background: "rgba(0,0,0,0.25)",
-                border: "1px solid rgba(255,255,255,0.08)",
-                borderRadius: "6px",
-                padding: "14px 16px",
-              }}
-            >
-              <div style={{ fontSize: "13px", fontWeight: 600, color: "#fff", display: "flex", alignItems: "center", gap: "6px", marginBottom: "4px" }}>
-                <span>🛠️</span>
-                <span>Quick Servicing & Repair Tools</span>
-              </div>
-              <div style={{ fontSize: "11px", opacity: 0.75, marginBottom: "12px" }}>
-                One-click automations to unblock stuck Windows Update & CBS servicing pipelines
+          {/* Right Column: Quick Servicing & Repair Tools + LAN Topology */}
+          <div>
+            {/* Quick Servicing & Repair Tools */}
+            <div className={`${baseClass}__panel`}>
+              <div className={`${baseClass}__panel-header`}>
+                <h3>Quick Servicing & Repair Tools</h3>
+                <p>One-click automations to unblock stuck Windows Update & CBS servicing pipelines</p>
               </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                {/* Tool 1: Flush WU Cache */}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(255,255,255,0.04)", padding: "10px", borderRadius: "4px" }}>
-                  <div>
-                    <div style={{ fontSize: "12px", fontWeight: 600, color: "#fff" }}>🧹 Flush Update Cache</div>
-                    <div style={{ fontSize: "11px", opacity: 0.7 }}>Purges corrupted payloads in SoftwareDistribution</div>
+              <div className={`${baseClass}__tools-list`}>
+                <div className={`${baseClass}__tool-item`}>
+                  <div className={`${baseClass}__tool-info`}>
+                    <strong>Flush Update Cache</strong>
+                    <span>Purges corrupted payloads in SoftwareDistribution</span>
                   </div>
                   <Button
                     variant="secondary"
@@ -981,23 +884,20 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
                     onClick={handleFlushCache}
                     isLoading={isFlushingCache}
                   >
-                    Flush Cache
+                    Flush cache
                   </Button>
                 </div>
 
-                {/* Tool 2: DISM Component Store Health */}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(255,255,255,0.04)", padding: "10px", borderRadius: "4px" }}>
-                  <div>
-                    <div style={{ fontSize: "12px", fontWeight: 600, color: "#fff" }}>🩺 DISM Health Check</div>
-                    <div style={{ fontSize: "11px", opacity: 0.7 }}>
+                <div className={`${baseClass}__tool-item`}>
+                  <div className={`${baseClass}__tool-info`}>
+                    <strong>DISM Health Check</strong>
+                    <span>
                       {dismHealthStatus ? (
-                        <span style={{ color: dismHealthStatus.includes("Healthy") ? "#2ecc71" : "#f39c12", fontWeight: 600 }}>
-                          {dismHealthStatus}
-                        </span>
+                        <StatusIndicator value={dismHealthStatus} indicator={dismHealthStatus.includes("Healthy") ? "success" : "warning"} />
                       ) : (
                         "Scans WinSxS component store integrity"
                       )}
-                    </div>
+                    </span>
                   </div>
                   <Button
                     variant="secondary"
@@ -1005,15 +905,14 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
                     onClick={handleDismScan}
                     isLoading={isScanningHealth}
                   >
-                    Run Scan
+                    Run scan
                   </Button>
                 </div>
 
-                {/* Tool 3: Restart Update Services */}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(255,255,255,0.04)", padding: "10px", borderRadius: "4px" }}>
-                  <div>
-                    <div style={{ fontSize: "12px", fontWeight: 600, color: "#fff" }}>🔄 Bounce WU Services</div>
-                    <div style={{ fontSize: "11px", opacity: 0.7 }}>Restarts wuauserv, bits, and UsoSvc</div>
+                <div className={`${baseClass}__tool-item`}>
+                  <div className={`${baseClass}__tool-info`}>
+                    <strong>Restart Update Services</strong>
+                    <span>Restarts wuauserv, bits, and UsoSvc</span>
                   </div>
                   <Button
                     variant="secondary"
@@ -1028,40 +927,30 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
             </div>
 
             {/* Mesh P2P LAN Seeder Topology */}
-            <div
-              style={{
-                background: "rgba(0,0,0,0.25)",
-                border: "1px solid rgba(0, 229, 255, 0.25)",
-                borderRadius: "6px",
-                padding: "14px 16px",
-              }}
-            >
+            <div className={`${baseClass}__panel`}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                <div style={{ fontSize: "13px", fontWeight: 600, color: "#00e5ff", display: "flex", alignItems: "center", gap: "6px" }}>
-                  <span>🌐</span>
-                  <span>Mesh P2P LAN Seeder Topology</span>
-                </div>
-                <span style={{ fontSize: "11px", background: "rgba(46, 204, 113, 0.2)", color: "#2ecc71", padding: "2px 8px", borderRadius: "10px", fontWeight: 600 }}>
-                  Active Seeder
-                </span>
+                <h3 style={{ margin: 0, fontSize: "14px", fontWeight: 600, color: "var(--core-fleet-black)" }}>
+                  Mesh P2P LAN Seeder Topology
+                </h3>
+                <StatusIndicator value="Active seeder" indicator="success" />
               </div>
 
-              <div style={{ display: "grid", gap: "8px", fontSize: "11px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-                  <span style={{ opacity: 0.7 }}>Seeder Endpoint:</span>
-                  <span style={{ fontWeight: 600, color: "#fff" }}>192.168.60.15:8888 (MDHPC)</span>
+              <div className={`${baseClass}__topology-rows`}>
+                <div className={`${baseClass}__topology-row`}>
+                  <span>Seeder Endpoint:</span>
+                  <span>192.168.60.15:8888 (MDHPC)</span>
                 </div>
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-                  <span style={{ opacity: 0.7 }}>Cached Package:</span>
-                  <span style={{ fontWeight: 600, color: "#00e5ff" }}>KB5124010 (4.68 GB)</span>
+                <div className={`${baseClass}__topology-row`}>
+                  <span>Cached Package:</span>
+                  <span style={{ color: "var(--core-vibrant-blue)" }}>KB5124010 (4.68 GB)</span>
                 </div>
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-                  <span style={{ opacity: 0.7 }}>LAN Transfer Rate:</span>
-                  <span style={{ fontWeight: 600, color: "#2ecc71" }}>~110 MB/s (Gigabit)</span>
+                <div className={`${baseClass}__topology-row`}>
+                  <span>LAN Transfer Rate:</span>
+                  <span style={{ color: "var(--ui-success)" }}>~110 MB/s (Gigabit)</span>
                 </div>
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}>
-                  <span style={{ opacity: 0.7 }}>Internet WAN Consumption:</span>
-                  <span style={{ fontWeight: 600, color: "#2ecc71" }}>0 MB (100% LAN Offloaded)</span>
+                <div className={`${baseClass}__topology-row`}>
+                  <span>Internet WAN Consumption:</span>
+                  <span style={{ color: "var(--ui-success)" }}>0 MB (100% LAN Offloaded)</span>
                 </div>
               </div>
             </div>
@@ -1070,237 +959,122 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
 
         {/* Deploy KB Package Panel */}
         {showDeployModal && (
-          <div
-            style={{
-              background: "rgba(0,0,0,0.45)",
-              padding: "20px",
-              borderRadius: "8px",
-              border: "1px solid rgba(0, 229, 255, 0.35)",
-              marginTop: "16px",
-            }}
-          >
-            {/* Tabs: Deployment vs Why It Could Fail */}
-            <div style={{ display: "flex", gap: "12px", borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "8px", marginBottom: "16px" }}>
+          <div className={`${baseClass}__deploy-container`}>
+            {/* Tabs */}
+            <div className={`${baseClass}__deploy-nav`}>
               <button
                 type="button"
                 onClick={() => setActiveTab("deploy")}
-                style={{
-                  background: activeTab === "deploy" ? "rgba(0,229,255,0.15)" : "transparent",
-                  color: activeTab === "deploy" ? "#00e5ff" : "#b3c0d8",
-                  border: "none",
-                  padding: "6px 14px",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                  fontWeight: 600,
-                  fontSize: "13px",
-                }}
+                className={`${baseClass}__deploy-nav-btn ${activeTab === "deploy" ? `${baseClass}__deploy-nav-btn--active` : ""}`}
               >
-                ⚡ Deploy Update Package
+                Deploy update package
               </button>
               <button
                 type="button"
                 onClick={() => setActiveTab("reasons")}
-                style={{
-                  background: activeTab === "reasons" ? "rgba(0,229,255,0.15)" : "transparent",
-                  color: activeTab === "reasons" ? "#00e5ff" : "#b3c0d8",
-                  border: "none",
-                  padding: "6px 14px",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                  fontWeight: 600,
-                  fontSize: "13px",
-                }}
+                className={`${baseClass}__deploy-nav-btn ${activeTab === "reasons" ? `${baseClass}__deploy-nav-btn--active` : ""}`}
               >
-                ℹ️ Why Could a Deployment Fail? (Diagnostic Guide)
+                Why could a deployment fail? (Diagnostic guide)
               </button>
             </div>
 
             {activeTab === "deploy" ? (
               <div>
-                {/* Deployment Source Mode Selector */}
+                {/* Source Mode Selector */}
                 <div style={{ marginBottom: "16px" }}>
-                  <label style={{ display: "block", fontSize: "12px", marginBottom: "8px", fontWeight: 600, color: "#fff" }}>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "var(--core-fleet-black)", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
                     Select Deployment Source & Network Topology:
                   </label>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
-                    {/* Mode 1: Microsoft Cloud */}
+                  <div className={`${baseClass}__sources-grid`}>
                     <div
                       onClick={() => setDeploySourceType("microsoft_cloud")}
-                      style={{
-                        padding: "12px",
-                        borderRadius: "6px",
-                        cursor: "pointer",
-                        background: deploySourceType === "microsoft_cloud" ? "rgba(0, 229, 255, 0.15)" : "rgba(0, 0, 0, 0.3)",
-                        border: deploySourceType === "microsoft_cloud" ? "1px solid #00e5ff" : "1px solid rgba(255,255,255,0.1)",
-                        transition: "all 0.2s ease",
-                      }}
+                      className={`${baseClass}__source-card ${deploySourceType === "microsoft_cloud" ? `${baseClass}__source-card--selected` : ""}`}
                     >
-                      <div style={{ fontWeight: 600, fontSize: "13px", color: deploySourceType === "microsoft_cloud" ? "#00e5ff" : "#fff", display: "flex", alignItems: "center", gap: "6px" }}>
-                        <span>🌐</span> Remote Host (Microsoft Cloud)
-                      </div>
-                      <div style={{ fontSize: "11px", opacity: 0.75, marginTop: "4px", lineHeight: "1.4" }}>
-                        Direct download from Microsoft CDN over internet. Bypasses domain WSUS locks. Best for off-site machines.
-                      </div>
+                      <strong>Remote Host (Microsoft Cloud)</strong>
+                      <p>Direct download from Microsoft CDN over internet. Bypasses domain WSUS locks. Best for off-site machines.</p>
                     </div>
 
-                    {/* Mode 2: Local LAN P2P */}
                     <div
                       onClick={() => setDeploySourceType("lan_p2p")}
-                      style={{
-                        padding: "12px",
-                        borderRadius: "6px",
-                        cursor: "pointer",
-                        background: deploySourceType === "lan_p2p" ? "rgba(0, 229, 255, 0.15)" : "rgba(0, 0, 0, 0.3)",
-                        border: deploySourceType === "lan_p2p" ? "1px solid #00e5ff" : "1px solid rgba(255,255,255,0.1)",
-                        transition: "all 0.2s ease",
-                      }}
+                      className={`${baseClass}__source-card ${deploySourceType === "lan_p2p" ? `${baseClass}__source-card--selected` : ""}`}
                     >
-                      <div style={{ fontWeight: 600, fontSize: "13px", color: deploySourceType === "lan_p2p" ? "#00e5ff" : "#fff", display: "flex", alignItems: "center", gap: "6px" }}>
-                        <span>⚡</span> Local LAN P2P (Office Seeder)
-                      </div>
-                      <div style={{ fontSize: "11px", opacity: 0.75, marginTop: "4px", lineHeight: "1.4" }}>
-                        Fast 1 Gbps LAN streaming from local peer. Saves 4.68 GB WAN bandwidth. For in-office machines.
-                      </div>
+                      <strong>Local LAN P2P (Office Seeder)</strong>
+                      <p>Fast 1 Gbps LAN streaming from local peer. Saves 4.68 GB WAN bandwidth. For in-office machines.</p>
                     </div>
 
-                    {/* Mode 3: Custom URL */}
                     <div
                       onClick={() => setDeploySourceType("custom_url")}
-                      style={{
-                        padding: "12px",
-                        borderRadius: "6px",
-                        cursor: "pointer",
-                        background: deploySourceType === "custom_url" ? "rgba(0, 229, 255, 0.15)" : "rgba(0, 0, 0, 0.3)",
-                        border: deploySourceType === "custom_url" ? "1px solid #00e5ff" : "1px solid rgba(255,255,255,0.1)",
-                        transition: "all 0.2s ease",
-                      }}
+                      className={`${baseClass}__source-card ${deploySourceType === "custom_url" ? `${baseClass}__source-card--selected` : ""}`}
                     >
-                      <div style={{ fontWeight: 600, fontSize: "13px", color: deploySourceType === "custom_url" ? "#00e5ff" : "#fff", display: "flex", alignItems: "center", gap: "6px" }}>
-                        <span>🔗</span> Custom Package URL
-                      </div>
-                      <div style={{ fontSize: "11px", opacity: 0.75, marginTop: "4px", lineHeight: "1.4" }}>
-                        Download standalone .msu directly from any custom HTTP/HTTPS, Azure Blob, or S3 endpoint.
-                      </div>
+                      <strong>Custom Package URL</strong>
+                      <p>Download standalone .msu directly from any custom HTTP/HTTPS, Azure Blob, or S3 endpoint.</p>
                     </div>
                   </div>
                 </div>
 
-                {/* Mode Specific Inputs & Notes */}
+                {/* Inputs */}
                 {deploySourceType === "microsoft_cloud" && (
-                  <div style={{ marginBottom: "14px" }}>
-                    <div style={{ marginBottom: "10px" }}>
-                      <label style={{ display: "block", fontSize: "12px", marginBottom: "4px", opacity: 0.8 }}>
-                        Target KB Article ID (or leave for Latest Cumulative Update):
-                      </label>
-                      <input
-                        type="text"
-                        value={kbArticle}
-                        onChange={(e) => setKbArticle(e.target.value)}
-                        placeholder="e.g. KB5124010"
-                        style={{
-                          width: "100%",
-                          maxWidth: "320px",
-                          padding: "8px 10px",
-                          background: "#0f141f",
-                          border: "1px solid #2c3a58",
-                          color: "#fff",
-                          borderRadius: "4px",
-                        }}
-                      />
-                    </div>
-                    <div style={{ background: "rgba(0, 229, 255, 0.08)", border: "1px solid rgba(0, 229, 255, 0.2)", borderRadius: "6px", padding: "10px 14px", fontSize: "12px", color: "#a4d8ff", lineHeight: "1.5" }}>
-                      <strong>ℹ️ Remote Host Direct Servicing:</strong> The target machine will connect directly to Microsoft Update Cloud over the internet, temporarily bypass domain WSUS restrictions (<code>UseWUServer = 0</code>), download packages directly onto the remote disk, and install unattended via the Windows Servicing Stack. No file push or local network seeder is needed.
+                  <div className={`${baseClass}__form-field`}>
+                    <label>Target KB Article ID (or leave for Latest Cumulative Update):</label>
+                    <input
+                      type="text"
+                      value={kbArticle}
+                      onChange={(e) => setKbArticle(e.target.value)}
+                      placeholder="e.g. KB5124010"
+                    />
+                    <div className={`${baseClass}__info-callout`}>
+                      <strong>Remote Host Direct Servicing:</strong> The target machine will connect directly to Microsoft Update Cloud over the internet, temporarily bypass domain WSUS restrictions (<code>UseWUServer = 0</code>), download packages directly onto the remote disk, and install unattended via the Windows Servicing Stack. No file push or local network seeder is needed.
                     </div>
                   </div>
                 )}
 
                 {deploySourceType === "lan_p2p" && (
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: "12px", marginBottom: "14px" }}>
-                    <div>
-                      <label style={{ display: "block", fontSize: "12px", marginBottom: "4px", opacity: 0.8 }}>
-                        KB Article ID:
-                      </label>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: "12px", marginBottom: "16px" }}>
+                    <div className={`${baseClass}__form-field`}>
+                      <label>KB Article ID:</label>
                       <input
                         type="text"
                         value={kbArticle}
                         onChange={(e) => setKbArticle(e.target.value)}
-                        style={{
-                          width: "100%",
-                          padding: "8px 10px",
-                          background: "#0f141f",
-                          border: "1px solid #2c3a58",
-                          color: "#fff",
-                          borderRadius: "4px",
-                        }}
                       />
                     </div>
-                    <div>
-                      <label style={{ display: "block", fontSize: "12px", marginBottom: "4px", opacity: 0.8 }}>
-                        Local LAN Seeder Endpoint:
-                      </label>
+                    <div className={`${baseClass}__form-field`}>
+                      <label>Local LAN Seeder Endpoint:</label>
                       <input
                         type="text"
                         value={seederUrl}
                         onChange={(e) => setSeederUrl(e.target.value)}
                         placeholder="http://192.168.60.15:8888/update.msu"
-                        style={{
-                          width: "100%",
-                          padding: "8px 10px",
-                          background: "#0f141f",
-                          border: "1px solid #2c3a58",
-                          color: "#fff",
-                          borderRadius: "4px",
-                        }}
                       />
                     </div>
                   </div>
                 )}
 
                 {deploySourceType === "custom_url" && (
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: "12px", marginBottom: "14px" }}>
-                    <div>
-                      <label style={{ display: "block", fontSize: "12px", marginBottom: "4px", opacity: 0.8 }}>
-                        KB Article ID:
-                      </label>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: "12px", marginBottom: "16px" }}>
+                    <div className={`${baseClass}__form-field`}>
+                      <label>KB Article ID:</label>
                       <input
                         type="text"
                         value={kbArticle}
                         onChange={(e) => setKbArticle(e.target.value)}
-                        style={{
-                          width: "100%",
-                          padding: "8px 10px",
-                          background: "#0f141f",
-                          border: "1px solid #2c3a58",
-                          color: "#fff",
-                          borderRadius: "4px",
-                        }}
                       />
                     </div>
-                    <div>
-                      <label style={{ display: "block", fontSize: "12px", marginBottom: "4px", opacity: 0.8 }}>
-                        Direct HTTP/HTTPS Download URL (.msu):
-                      </label>
+                    <div className={`${baseClass}__form-field`}>
+                      <label>Direct HTTP/HTTPS Download URL (.msu):</label>
                       <input
                         type="text"
                         value={customUrl}
                         onChange={(e) => setCustomUrl(e.target.value)}
                         placeholder="https://storage.example.com/windows11.0-kb5124010-x64.msu"
-                        style={{
-                          width: "100%",
-                          padding: "8px 10px",
-                          background: "#0f141f",
-                          border: "1px solid #2c3a58",
-                          color: "#fff",
-                          borderRadius: "4px",
-                        }}
                       />
                     </div>
                   </div>
                 )}
 
-                <div style={{ display: "flex", gap: "20px", alignItems: "center", marginBottom: "16px" }}>
+                <div className={`${baseClass}__checkbox-row`}>
                   {deploySourceType === "lan_p2p" && (
-                    <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", cursor: "pointer" }}>
+                    <label>
                       <input
                         type="checkbox"
                         checked={useP2P}
@@ -1309,7 +1083,7 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
                       <span>Record Mesh P2P Bandwidth Telemetry (saves 4.68 GB WAN)</span>
                     </label>
                   )}
-                  <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", cursor: "pointer" }}>
+                  <label>
                     <input
                       type="checkbox"
                       checked={autoReboot}
@@ -1321,43 +1095,52 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
 
                 {/* Progress Bar & Stage Indicator */}
                 {patchStatus.status !== "idle" && (
-                  <div style={{ background: "rgba(0,0,0,0.3)", padding: "14px", borderRadius: "6px", marginBottom: "16px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
-                      <span style={{ fontSize: "13px", fontWeight: 600, color: patchStatus.status === "completed" ? "#2ecc71" : patchStatus.status === "failed" ? "#e74c3c" : "#00e5ff" }}>
-                        {patchStatus.status === "running" && `⟳ Stage: ${patchStatus.stage || "processing"}...`}
-                        {patchStatus.status === "completed" && "✓ Installation Succeeded!"}
-                        {patchStatus.status === "failed" && "❌ Installation Failed"}
+                  <div className={`${baseClass}__progress-box`}>
+                    <div className={`${baseClass}__progress-header`}>
+                      <span>
+                        {patchStatus.status === "running" && `Stage: ${patchStatus.stage || "processing"}...`}
+                        {patchStatus.status === "completed" && "Installation succeeded"}
+                        {patchStatus.status === "failed" && "Installation failed"}
                       </span>
-                      <span style={{ fontSize: "12px", opacity: 0.8 }}>
-                        {patchStatus.progress || 0}% Complete
-                      </span>
+                      <span>{patchStatus.progress || 0}% Complete</span>
                     </div>
 
-                    {/* Progress track */}
-                    <div style={{ width: "100%", height: "8px", background: "rgba(255,255,255,0.1)", borderRadius: "4px", overflow: "hidden" }}>
+                    <div className={`${baseClass}__progress-bar-track`}>
                       <div
-                        style={{
-                          width: `${patchStatus.progress || 0}%`,
-                          height: "100%",
-                          background: patchStatus.status === "completed" ? "#2ecc71" : patchStatus.status === "failed" ? "#e74c3c" : "linear-gradient(90deg, #00e5ff, #3498db)",
-                          transition: "width 0.4s ease",
-                        }}
+                        className={`${baseClass}__progress-bar-fill ${
+                          patchStatus.status === "completed"
+                            ? `${baseClass}__progress-bar-fill--success`
+                            : patchStatus.status === "failed"
+                            ? `${baseClass}__progress-bar-fill--error`
+                            : ""
+                        }`}
+                        style={{ width: `${patchStatus.progress || 0}%` }}
                       />
                     </div>
 
-                    <div style={{ fontSize: "12px", marginTop: "8px", opacity: 0.9 }}>
+                    <div className={`${baseClass}__progress-message`}>
                       {patchStatus.message}
                     </div>
 
                     {codeDetails && (
-                      <div style={{ marginTop: "10px", padding: "8px 12px", borderRadius: "4px", background: codeDetails.isSuccess ? "rgba(46, 204, 113, 0.15)" : "rgba(231, 76, 60, 0.15)", border: codeDetails.isSuccess ? "1px solid #2ecc71" : "1px solid #e74c3c" }}>
+                      <div
+                        style={{
+                          marginTop: "10px",
+                          padding: "8px 12px",
+                          borderRadius: "4px",
+                          fontSize: "12px",
+                          background: codeDetails.isSuccess ? "rgba(61, 182, 123, 0.12)" : "rgba(214, 108, 123, 0.12)",
+                          border: codeDetails.isSuccess ? "1px solid var(--ui-success)" : "1px solid var(--ui-error)",
+                          color: "var(--core-fleet-black)",
+                        }}
+                      >
                         <strong>{codeDetails.title}:</strong> {codeDetails.explanation}
                       </div>
                     )}
                   </div>
                 )}
 
-                <div style={{ display: "flex", gap: "10px" }}>
+                <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
                   <Button
                     variant="default"
                     size="small"
@@ -1365,19 +1148,19 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
                     isLoading={isLaunching || patchStatus.status === "running"}
                   >
                     {isLaunching || patchStatus.status === "running"
-                      ? "⚡ Staging Update on Host..."
+                      ? "Staging update on host..."
                       : deploySourceType === "microsoft_cloud"
-                      ? "🌐 Initiate Direct Cloud Install on Remote Host"
+                      ? "Initiate direct cloud install on remote host"
                       : deploySourceType === "lan_p2p"
-                      ? "🚀 Execute LAN P2P Stream Install"
-                      : "🚀 Execute Remote Download & Install"}
+                      ? "Execute LAN P2P stream install"
+                      : "Execute remote download & install"}
                   </Button>
                   <Button
                     variant="secondary"
                     size="small"
                     onClick={pollHostProgress}
                   >
-                    🔄 Refresh Progress
+                    Refresh progress
                   </Button>
                   <Button
                     variant="secondary"
@@ -1389,64 +1172,45 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
                 </div>
 
                 {recentLog && (
-                  <div style={{ marginTop: "16px" }}>
-                    <div style={{ fontSize: "11px", fontWeight: 600, opacity: 0.7, marginBottom: "4px", textTransform: "uppercase" }}>
-                      Live Host Execution Log (C:\Windows\Temp\mesh_patch_install.log):
-                    </div>
-                    <pre
-                      style={{
-                        padding: "10px",
-                        background: "#080b11",
-                        border: "1px solid #1a2333",
-                        borderRadius: "4px",
-                        fontSize: "11px",
-                        color: "#a4b5d4",
-                        maxHeight: "150px",
-                        overflowY: "auto",
-                        whiteSpace: "pre-wrap",
-                      }}
-                    >
-                      {recentLog}
-                    </pre>
+                  <div className={`${baseClass}__log-section`}>
+                    <h5>Live Host Execution Log (C:\Windows\Temp\mesh_patch_install.log)</h5>
+                    <pre>{recentLog}</pre>
                   </div>
                 )}
               </div>
             ) : (
-              /* Tab 2: Why Could a Deployment Fail? */
-              <div style={{ fontSize: "13px", lineHeight: "1.6", color: "#c2d1e8" }}>
-                <h4 style={{ margin: "0 0 10px 0", color: "#00e5ff" }}>
-                  Common Root Causes for Windows Offline Update Failures:
-                </h4>
-                <div style={{ display: "grid", gap: "10px" }}>
-                  <div style={{ background: "rgba(0,0,0,0.3)", padding: "10px 14px", borderRadius: "6px" }}>
-                    <strong style={{ color: "#e74c3c" }}>1. LAN Seeder Network Unreachable:</strong>
-                    <div>If streaming from a local machine (e.g. <code>192.168.60.15:8888</code>), Windows Defender Firewall on the seeder machine must allow inbound TCP port 8888. The pre-flight check automatically validates this before downloading.</div>
-                  </div>
+              /* Diagnostic Guide */
+              <div className={`${baseClass}__diagnostics-guide`}>
+                <h4>Common Root Causes for Windows Servicing & Update Failures</h4>
 
-                  <div style={{ background: "rgba(0,0,0,0.3)", padding: "10px 14px", borderRadius: "6px" }}>
-                    <strong style={{ color: "#e74c3c" }}>2. Insufficient Free Disk Space:</strong>
-                    <div>Cumulative updates (4.68 GB) require at least <strong>10–15 GB</strong> of free space on <code>C:\</code> to unpack CAB servicing manifests into <code>C:\Windows\SoftwareDistribution</code>.</div>
-                  </div>
+                <div className={`${baseClass}__guide-item`}>
+                  <strong style={{ color: "var(--ui-error)" }}>1. LAN Seeder Network Unreachable:</strong>
+                  <p>If streaming from a local machine (e.g. <code>192.168.60.15:8888</code>), Windows Defender Firewall on the seeder machine must allow inbound TCP port 8888. The pre-flight check automatically validates this before downloading.</p>
+                </div>
 
-                  <div style={{ background: "rgba(0,0,0,0.3)", padding: "10px 14px", borderRadius: "6px" }}>
-                    <strong style={{ color: "#e74c3c" }}>3. CBS Reboot Pending Lock:</strong>
-                    <div>If a previous Servicing Stack Update (SSU) was staged but the machine hasn't rebooted yet, Windows Servicing will reject installing a newer Cumulative Update until the pending restart completes.</div>
-                  </div>
+                <div className={`${baseClass}__guide-item`}>
+                  <strong style={{ color: "var(--ui-error)" }}>2. Insufficient Free Disk Space:</strong>
+                  <p>Cumulative updates (4.68 GB) require at least <strong>10–15 GB</strong> of free space on <code>C:\</code> to unpack CAB servicing manifests into <code>C:\Windows\SoftwareDistribution</code>.</p>
+                </div>
 
-                  <div style={{ background: "rgba(0,0,0,0.3)", padding: "10px 14px", borderRadius: "6px" }}>
-                    <strong style={{ color: "#e74c3c" }}>4. Package Not Applicable (0x80240024):</strong>
-                    <div>Occurs if the KB package architecture (e.g. ARM64 vs x64) does not match the processor, or if the major OS version does not match (e.g., Windows 10 vs Windows 11).</div>
-                  </div>
+                <div className={`${baseClass}__guide-item`}>
+                  <strong style={{ color: "var(--ui-error)" }}>3. CBS Reboot Pending Lock:</strong>
+                  <p>If a previous Servicing Stack Update (SSU) was staged but the machine hasn't rebooted yet, Windows Servicing will reject installing a newer Cumulative Update until the pending restart completes.</p>
+                </div>
 
-                  <div style={{ background: "rgba(0,0,0,0.3)", padding: "10px 14px", borderRadius: "6px" }}>
-                    <strong style={{ color: "#2ecc71" }}>5. Exit Code 3010 is a SUCCESS:</strong>
-                    <div>Windows Update returns exit code <code>3010</code> (<code>ERROR_SUCCESS_REBOOT_REQUIRED</code>) when installation succeeds. This is not an error! A simple reboot activates the new build.</div>
-                  </div>
+                <div className={`${baseClass}__guide-item`}>
+                  <strong style={{ color: "var(--ui-error)" }}>4. Package Not Applicable (0x80240024):</strong>
+                  <p>Occurs if the KB package architecture (e.g. ARM64 vs x64) does not match the processor, or if the major OS version does not match (e.g., Windows 10 vs Windows 11).</p>
+                </div>
 
-                  <div style={{ background: "rgba(0,0,0,0.3)", padding: "10px 14px", borderRadius: "6px" }}>
-                    <strong style={{ color: "#00e5ff" }}>6. Hosts on Remote / External Networks:</strong>
-                    <div>If a host is away on a remote network or home office, use <strong>Remote Host (Microsoft Cloud)</strong> mode. The remote machine downloads directly from Microsoft's global CDN over the internet and bypasses domain WSUS redirectors, eliminating the need to push large multi-gigabyte files across WAN or VPN links.</div>
-                  </div>
+                <div className={`${baseClass}__guide-item`}>
+                  <strong style={{ color: "var(--ui-success)" }}>5. Exit Code 3010 is a SUCCESS:</strong>
+                  <p>Windows Update returns exit code <code>3010</code> (<code>ERROR_SUCCESS_REBOOT_REQUIRED</code>) when installation succeeds. This is not an error! A simple reboot activates the new build.</p>
+                </div>
+
+                <div className={`${baseClass}__guide-item`}>
+                  <strong style={{ color: "var(--core-vibrant-blue)" }}>6. Hosts on Remote / External Networks:</strong>
+                  <p>If a host is away on a remote network or home office, use <strong>Remote Host (Microsoft Cloud)</strong> mode. The remote machine downloads directly from Microsoft's global CDN over the internet and bypasses domain WSUS redirectors, eliminating the need to push large multi-gigabyte files across WAN or VPN links.</p>
                 </div>
               </div>
             )}
@@ -1461,10 +1225,10 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
             isLoading={isRebooting}
           >
             <div style={{ padding: "8px 0" }}>
-              <p style={{ margin: "0 0 14px 0", fontSize: "14px", lineHeight: "1.5" }}>
+              <p style={{ margin: "0 0 14px 0", fontSize: "14px", lineHeight: "1.5", color: "var(--core-fleet-black)" }}>
                 Are you sure you want to reboot <strong>{host.display_name || "this host"}</strong>?
               </p>
-              <p style={{ margin: "0 0 20px 0", fontSize: "13px", opacity: 0.8, lineHeight: "1.4" }}>
+              <p style={{ margin: "0 0 20px 0", fontSize: "13px", color: "var(--ui-fleet-black-75)", lineHeight: "1.4" }}>
                 {buildInfo?.RebootPending
                   ? "A reboot is currently required to finalize and apply pending Windows servicing packages. The machine will restart in 10 seconds."
                   : "The machine will gracefully close active processes and restart in 10 seconds."}
@@ -1482,7 +1246,7 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
                   onClick={handleRebootHost}
                   isLoading={isRebooting}
                 >
-                  Yes, Reboot Host
+                  Yes, reboot host
                 </Button>
               </div>
             </div>
