@@ -215,15 +215,25 @@ const translateWusaExitCode = (code?: number): { title: string; explanation: str
 const formatErrorReason = (err: any): string => {
   if (!err) return "Unknown error occurred.";
   if (typeof err === "string") return err;
-  if (err.response?.data?.errors?.[0]?.reason) return err.response.data.errors[0].reason;
-  if (err.response?.data?.message) return err.response.data.message;
-  if (err.message) return err.message;
-  if (err.status === 524) return "Operation timed out via proxy (the task is running in the background on the host).";
-  try {
-    return JSON.stringify(err);
-  } catch {
-    return String(err);
+
+  // Extract human-friendly error reason from Fleet API response
+  const data = err.data || err.response?.data;
+  if (data?.errors?.[0]?.reason) {
+    return data.errors[0].reason;
   }
+  if (data?.message && data.message !== "Validation Failed") {
+    return data.message;
+  }
+  if (err.status === 409 || err.response?.status === 409) {
+    return "A script or update is already running on this host. Please wait about 5 minutes to let it finish.";
+  }
+  if (err.status === 524 || err.response?.status === 524) {
+    return "Operation timed out via proxy (task is executing in background on host).";
+  }
+  if (err.message && typeof err.message === "string") {
+    return err.message;
+  }
+  return "Host script execution failed. Please verify the host is online and try again.";
 };
 
 const WindowsUpdatesCard: React.FC<IWindowsUpdatesCardProps> = ({ host, className }) => {
@@ -249,6 +259,7 @@ const WindowsUpdatesCard: React.FC<IWindowsUpdatesCardProps> = ({ host, classNam
   const [patchStatus, setPatchStatus] = useState<IPatchStatus>({ status: "idle" });
   const [recentLog, setRecentLog] = useState<string>("");
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isPollingRef = useRef(false);
 
   // Clean up polling timer
   useEffect(() => {
@@ -393,6 +404,9 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
 
   // Poll progress from host
   const pollHostProgress = async () => {
+    if (isPollingRef.current) return;
+    isPollingRef.current = true;
+
     const pollScript = [
       `$statusFile = "$env:SystemRoot\\Temp\\mesh_patch_status.json"`,
       `$logFile = "$env:SystemRoot\\Temp\\mesh_patch_install.log"`,
@@ -441,6 +455,8 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
       }
     } catch {
       // ignore network blips during polling
+    } finally {
+      isPollingRef.current = false;
     }
   };
 
@@ -654,9 +670,9 @@ $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 4 
 
       notify.success("Deployment worker launched on host. Monitoring live progress...");
 
-      // Start live polling every 4 seconds
+      // Start live polling every 10 seconds with lock guard
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = setInterval(pollHostProgress, 4000);
+      pollIntervalRef.current = setInterval(pollHostProgress, 10000);
     } catch (err: any) {
       notify.error(`Failed to launch deployment: ${formatErrorReason(err)}`);
       setPatchStatus({
